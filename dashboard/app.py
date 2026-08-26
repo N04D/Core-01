@@ -21,6 +21,10 @@ PLUGIN_ANALYTICS: Final = {
     "LinkedIn Pro Publisher & Analytics": ("linkedin_analytics_*.json",),
     "LinkedIn Publisher (Productie)": ("linkedin_analytics_*.json",),
     "Substack Publisher": ("substack_analytics_*.json",),
+    "Substack Pro Publisher & Analytics": (
+        "substack_analytics_*.json",
+        "substack_read_comments_*.json",
+    ),
 }
 
 
@@ -315,4 +319,3 @@ def create_app(database_path: Path | None = None) -> Flask:
         return error
 
     return app
-

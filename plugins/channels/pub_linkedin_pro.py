@@ -48,6 +48,9 @@ def parse_args() -> argparse.Namespace:
     modes.add_argument("--fetch-bio", action="store_true")
     parser.add_argument("--company-id", help="LinkedIn company/page identifier.")
     parser.add_argument("--newsletter-id", help="LinkedIn newsletter identifier.")
+    parser.add_argument("--text", help="Inline post/article text (overrides payload content).")
+    parser.add_argument("--image-path", type=Path, help="JPG/PNG media attachment.")
+    parser.add_argument("--video-path", type=Path, help="Video media attachment.")
     parser.add_argument("--profile-url", help="Explicit LinkedIn profile URL for bio mode.")
     parser.add_argument("--auth", type=Path, default=DEFAULT_AUTH)
     parser.add_argument("--limit", type=int, default=10)
@@ -59,8 +62,20 @@ def parse_args() -> argparse.Namespace:
         help="Override LINKEDIN_HEADLESS (default: true).",
     )
     args = parser.parse_args()
-    if not any((args.register, args.event_id is not None, args.analytics, args.fetch_bio)):
-        parser.error("choose --register, --event_id, --analytics, or --fetch-bio")
+    if not any(
+        (
+            args.register,
+            args.event_id is not None,
+            args.analytics,
+            args.fetch_bio,
+            args.text is not None,
+            args.image_path is not None,
+            args.video_path is not None,
+        )
+    ):
+        parser.error(
+            "choose --register, --event_id, --analytics, --fetch-bio, or content/media"
+        )
     if args.event_id is not None and args.event_id < 1:
         parser.error("--event_id must be positive")
     if not 1 <= args.limit <= 100:
@@ -227,6 +242,60 @@ def content_from_payload(payload: dict[str, Any]) -> str:
     return (match.group(1) if match else text).strip()
 
 
+def media_manifest(payload: dict[str, Any], strict: bool) -> list[dict[str, Any]]:
+    """Validate image/video payload paths and return normalized media metadata."""
+    manifest: list[dict[str, Any]] = []
+    rules = {
+        "image_path": {".jpg", ".jpeg", ".png"},
+        "video_path": {".mp4", ".mov", ".m4v", ".webm"},
+    }
+    for field, extensions in rules.items():
+        raw = payload.get(field)
+        if raw is None:
+            continue
+        if not isinstance(raw, str) or not raw.strip():
+            raise ValueError(f"{field} must be a non-empty path")
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            path = PROJECT_ROOT / path
+        exists = path.is_file()
+        suffix = path.suffix.lower()
+        if suffix not in extensions:
+            raise ValueError(f"unsupported {field} extension: {suffix}")
+        if strict and not exists:
+            raise FileNotFoundError(f"media file missing: {path}")
+        manifest.append(
+            {
+                "kind": "image" if field == "image_path" else "video",
+                "path": str(path.resolve()) if exists else str(path.resolve(strict=False)),
+                "exists": exists,
+            }
+        )
+    return manifest
+
+
+def upload_media(page: Any, manifest: list[dict[str, Any]]) -> None:
+    """Upload normalized media through LinkedIn's hidden file inputs."""
+    for media in manifest:
+        selectors = (
+            ["input[type='file'][accept*='image']", "input[type='file']"]
+            if media["kind"] == "image"
+            else ["input[type='file'][accept*='video']", "input[type='file']"]
+        )
+        uploaded = False
+        for selector in selectors:
+            locator = page.locator(selector).last
+            try:
+                if locator.count():
+                    locator.set_input_files(media["path"])
+                    uploaded = True
+                    break
+            except Exception:
+                continue
+        if not uploaded:
+            raise LinkedInProError(f"no upload input found for {media['kind']}")
+
+
 def make_teaser(payload: dict[str, Any], content: str) -> str:
     """Generate a deterministic teaser for article or link publications."""
     explicit = payload.get("teaser")
@@ -251,6 +320,7 @@ def publish_post(
     """Compose a profile/company post or newsletter article."""
     content = content_from_payload(payload)
     teaser = make_teaser(payload, content)
+    media = media_manifest(payload, strict=True)
     if newsletter_id:
         page.goto(
             f"https://www.linkedin.com/newsletters/{newsletter_id}/new/",
@@ -262,6 +332,7 @@ def publish_post(
             page,
             ["div[contenteditable='true'][role='textbox']", "div.ProseMirror"],
         ).fill(content)
+        upload_media(page, media)
     else:
         target = (
             f"https://www.linkedin.com/company/{company_id}/admin/page-posts/published/"
@@ -284,10 +355,11 @@ def publish_post(
                 "div[role='dialog'] div.ql-editor",
             ],
         ).fill(teaser)
+        upload_media(page, media)
 
     if dry_run:
         artifact = capture_error(page, "dry_run")
-        return {"published": False, "dry_run": True, "screenshot": str(artifact) if artifact else None}
+        return {"published": False, "dry_run": True, "media": media, "screenshot": str(artifact) if artifact else None}
     button = first_visible(
         page,
         [
@@ -300,7 +372,7 @@ def publish_post(
     if not button.is_enabled():
         raise LinkedInProError("publication button is disabled")
     button.click()
-    return {"published": True, "dry_run": False}
+    return {"published": True, "dry_run": False, "media": media}
 
 
 def text_or_empty(locator: Any) -> str:
@@ -388,7 +460,7 @@ def save_artifact(directory: Path, prefix: str, data: Any) -> tuple[Path, Path]:
     return json_path, md_path
 
 
-def mock_result(mode: str) -> dict[str, Any]:
+def mock_result(mode: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     """Return an explicit non-network fallback result."""
     base: dict[str, Any] = {
         "mode": mode,
@@ -419,6 +491,15 @@ def mock_result(mode: str) -> dict[str, Any]:
                 "experience": [],
             }
         )
+    elif mode == "publish":
+        publish_payload = payload or {}
+        base.update(
+            {
+                "published": False,
+                "text": publish_payload.get("content", ""),
+                "media": media_manifest(publish_payload, strict=False),
+            }
+        )
     return base
 
 
@@ -427,7 +508,7 @@ def execute(args: argparse.Namespace, payload: dict[str, Any]) -> dict[str, Any]
     auth = validated_auth(args.auth)
     mode = "analytics" if args.analytics else "fetch_bio" if args.fetch_bio else "publish"
     if auth is None:
-        result = mock_result(mode)
+        result = mock_result(mode, payload)
         directory = ANALYTICS_DIR if mode == "analytics" else RESEARCH_DIR
         json_path, md_path = save_artifact(directory, f"linkedin_{mode}_mock", result)
         result.update({"json_path": str(json_path), "markdown_path": str(md_path)})
@@ -463,10 +544,23 @@ def main() -> int:
         with connect(database) as connection:
             if args.register:
                 register_plugin(connection)
-            should_execute = args.event_id is not None or args.analytics or args.fetch_bio
+            should_execute = (
+                args.event_id is not None
+                or args.analytics
+                or args.fetch_bio
+                or args.text is not None
+                or args.image_path is not None
+                or args.video_path is not None
+            )
             if should_execute:
                 if args.event_id is not None:
                     event_payload = load_payload(connection, args.event_id)
+                if args.text is not None:
+                    event_payload["content"] = args.text
+                if args.image_path is not None:
+                    event_payload["image_path"] = str(args.image_path)
+                if args.video_path is not None:
+                    event_payload["video_path"] = str(args.video_path)
                 result = execute(args, event_payload)
                 LOGGER.info("Operation result: %s", json.dumps(result, ensure_ascii=False))
                 if args.event_id is not None:

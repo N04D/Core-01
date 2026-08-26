@@ -59,8 +59,34 @@ Uitgebreide adapter voor:
 - Recente-postanalytics met likes, views en comments (`--analytics`).
 - Profiel-/bedrijfscontext met headline, bio en ervaring (`--fetch-bio`).
 - JSON- en Markdownartifacts in `vault/analytics/` en `vault/research/`.
+- Multimodale profiel-, bedrijfspagina- en nieuwsbriefcontent via `--text`,
+  `--image-path` (JPG/PNG) en `--video-path` (MP4/MOV/M4V/WebM).
+- Playwright file-inputuploads voor afbeeldingen en video, met een gevalideerd
+  media-manifest in dry-run- en mockresultaten.
 
 Zonder auth-state wordt `AUTH_REQUIRED` als expliciet mockresultaat opgeslagen en wordt LinkedIn niet benaderd.
+
+### Substack Pro Publisher & Analytics
+
+Bestand: `plugins/channels/pub_substack_pro.py`
+
+Volwaardige multimodale Substack-adapter voor artikelen, Notes en operationele
+feedback:
+
+- `--post-article`: titel, optionele `--subheader`, body en media.
+- `--post-note`: korte tekst met optionele afbeelding en/of video.
+- `--analytics`: abonneegroei, views en engagement.
+- `--read-comments`: auteurs en reactietekst van artikelen/Notes.
+- `--fetch-profile`: profiel- en publicatiecontext voor AI-playbooks.
+- `--text`, `--image-path` en `--video-path` zijn zowel CLI- als
+  event-payloadvelden.
+
+Analytics en comments worden als JSON én Markdown opgeslagen in
+`vault/analytics/`; profieldata komt in `vault/research/`. Browserfouten leveren
+een screenshot in `vault/logs/screenshots/`. Zonder
+`config/substack_auth.json` ontstaat een veilig `AUTH_REQUIRED`-mockresultaat
+met `substack_contacted: false`; ontbrekende media worden dan gerapporteerd in
+plaats van geüpload.
 
 ## Registreren en routeren
 
@@ -69,6 +95,7 @@ Zonder auth-state wordt `AUTH_REQUIRED` als expliciet mockresultaat opgeslagen e
 ./venv/bin/python3 plugins/ai/gen_local_llm.py --register --db db/events.db
 ./venv/bin/python3 plugins/io/crawl_firecrawl.py --register --db db/events.db
 ./venv/bin/python3 plugins/channels/pub_linkedin_pro.py --register --db db/events.db
+./venv/bin/python3 plugins/channels/pub_substack_pro.py --register --db db/events.db
 ```
 
 Routes kunnen idempotent via SQLite worden beheerd. Controleer ze met `scripts/system_status.py` voordat een productieflow start.
