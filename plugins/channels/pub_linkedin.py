@@ -382,9 +382,15 @@ def process_event(
     """Publish one event and persist its terminal state."""
     payload = load_payload(connection, event_id)
     content = extract_content(payload)
-    artifact = publish(content, event_id, dry_run, mock_auth_fallback)
-    payload["linkedin_dry_run"] = dry_run
-    payload["linkedin_published"] = not dry_run
+    effective_dry_run = dry_run or payload.get("dry_run") is True
+    effective_mock_fallback = (
+        mock_auth_fallback or payload.get("mock_auth_fallback") is True
+    )
+    artifact = publish(
+        content, event_id, effective_dry_run, effective_mock_fallback
+    )
+    payload["linkedin_dry_run"] = effective_dry_run
+    payload["linkedin_published"] = not effective_dry_run
     if artifact is not None:
         payload["linkedin_screenshot"] = str(artifact)
     update_event(connection, event_id, "COMPLETED", None, payload)
