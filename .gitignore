@@ -1,0 +1,16 @@
+# Python environments and bytecode
+venv/
+__pycache__/
+*.py[cod]
+
+# Local configuration and authentication state
+.env
+config/linkedin_auth.json
+linkedin_auth.json
+auth.json
+
+# Runtime database and browser diagnostics
+db/*.db
+db/*.db-shm
+db/*.db-wal
+vault/logs/screenshots/

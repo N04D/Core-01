@@ -1,0 +1,19 @@
+{
+  "mode": "analytics",
+  "mock": true,
+  "linkedin_contacted": false,
+  "status": "AUTH_REQUIRED",
+  "posts": [
+    {
+      "content": "Veilige LinkedIn Pro mock-publicatie",
+      "likes": 0,
+      "views": 0,
+      "comments": [
+        {
+          "author": "Mock gebruiker",
+          "text": "Mock engagement; LinkedIn is niet benaderd."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+[Unit]
+Description=Social Engine Event Worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=infra
+Group=infra
+WorkingDirectory=/home/infra/dev
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/home/infra/dev/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-/home/infra/dev/.env
+ExecStart=/home/infra/dev/venv/bin/python3 /home/infra/dev/daemon/worker.py --database /home/infra/dev/db/events.db
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target
