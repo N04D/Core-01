@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import stat
+import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Final
@@ -25,6 +28,28 @@ PLUGIN_ANALYTICS: Final = {
         "substack_analytics_*.json",
         "substack_read_comments_*.json",
     ),
+}
+AUTH_PROFILES: Final = {
+    "LinkedIn Publisher (Productie)": {
+        "platform": "linkedin",
+        "auth_file": PROJECT_ROOT / "config" / "linkedin_auth.json",
+    },
+    "LinkedIn Pro Publisher & Analytics": {
+        "platform": "linkedin",
+        "auth_file": PROJECT_ROOT / "config" / "linkedin_auth.json",
+    },
+    "Substack Publisher": {
+        "platform": "substack",
+        "auth_file": PROJECT_ROOT / "config" / "substack_auth.json",
+    },
+    "Substack Pro Publisher & Analytics": {
+        "platform": "substack",
+        "auth_file": PROJECT_ROOT / "config" / "substack_auth.json",
+    },
+    "Medium Publisher": {
+        "platform": "medium",
+        "auth_file": PROJECT_ROOT / "config" / "medium_auth.json",
+    },
 }
 
 
@@ -68,6 +93,60 @@ def create_app(database_path: Path | None = None) -> Flask:
                 stat_result.st_mtime, tz=timezone.utc
             ).isoformat(),
         }
+
+    def active_plugin(connection: sqlite3.Connection, plugin_name: str) -> sqlite3.Row:
+        row = connection.execute(
+            """
+            SELECT plugin_name,type,executable_path,icon,is_active
+              FROM plugin_registry
+             WHERE plugin_name=? AND is_active=1
+            """,
+            (plugin_name,),
+        ).fetchone()
+        if row is None:
+            abort(404, description="Actieve plugin niet gevonden")
+        return row
+
+    def auth_status(plugin_name: str) -> dict[str, Any]:
+        profile = AUTH_PROFILES.get(plugin_name)
+        if profile is None:
+            return {
+                "supported": False,
+                "status": "NOT_REQUIRED",
+                "connected": True,
+                "message": "Deze lokale plugin vereist geen browsersessie.",
+            }
+        auth_file = Path(profile["auth_file"])
+        result: dict[str, Any] = {
+            "supported": True,
+            "platform": profile["platform"],
+            "auth_file": str(auth_file),
+            "connected": False,
+            "status": "AUTH_REQUIRED",
+            "message": "Log in om een beveiligde browsersessie op te slaan.",
+        }
+        if not auth_file.is_file():
+            return result
+        try:
+            mode = stat.S_IMODE(auth_file.stat().st_mode)
+            state = json.loads(auth_file.read_text(encoding="utf-8"))
+            if mode & (stat.S_IRWXG | stat.S_IRWXO):
+                result["message"] = f"Onveilige bestandsrechten ({mode:o}); verwacht 600."
+                return result
+            if not isinstance(state, dict) or not isinstance(state.get("cookies"), list):
+                result["message"] = "Sessiebestand is geen geldige Playwright storage-state."
+                return result
+        except (OSError, json.JSONDecodeError) as exc:
+            result["message"] = f"Sessiebestand kon niet worden gelezen: {exc}"
+            return result
+        result.update(
+            {
+                "connected": True,
+                "status": "CONNECTED",
+                "message": "Beveiligde Playwright-sessie beschikbaar.",
+            }
+        )
+        return result
 
     @app.get("/")
     def index() -> str:
@@ -134,6 +213,57 @@ def create_app(database_path: Path | None = None) -> Flask:
         if cursor.rowcount != 1:
             abort(404, description="Plugin niet gevonden")
         return jsonify({"plugin_name": plugin_name, "is_active": active})
+
+    @app.get("/api/plugins/<path:plugin_name>/settings")
+    def plugin_settings(plugin_name: str) -> Any:
+        """Return settings only for an active plugin."""
+        with connect() as connection:
+            plugin = active_plugin(connection, plugin_name)
+        return jsonify({"plugin": dict(plugin), "auth": auth_status(plugin_name)})
+
+    @app.post("/api/plugins/<path:plugin_name>/authenticate")
+    def authenticate_plugin(plugin_name: str) -> Any:
+        """Start a detached headed login helper for a supported active plugin."""
+        with connect() as connection:
+            active_plugin(connection, plugin_name)
+        profile = AUTH_PROFILES.get(plugin_name)
+        if profile is None:
+            abort(409, description="Deze plugin vereist geen authenticatie")
+
+        auth_file = Path(profile["auth_file"])
+        auth_file.parent.mkdir(parents=True, exist_ok=True)
+        helper = Path(__file__).resolve().parent / "authenticate.py"
+        command = [
+            sys.executable,
+            str(helper),
+            "--platform",
+            str(profile["platform"]),
+            "--auth-file",
+            str(auth_file),
+        ]
+        try:
+            process = subprocess.Popen(
+                command,
+                cwd=PROJECT_ROOT,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+                close_fds=True,
+            )
+        except OSError as exc:
+            return jsonify({"error": f"Loginbrowser kon niet starten: {exc}"}), 503
+        return (
+            jsonify(
+                {
+                    "started": True,
+                    "pid": process.pid,
+                    "platform": profile["platform"],
+                    "message": "Browser gestart. Rond de login af; status wordt automatisch vernieuwd.",
+                }
+            ),
+            202,
+        )
 
     @app.get("/api/plugin-stats")
     def plugin_stats() -> Any:
