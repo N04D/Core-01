@@ -186,6 +186,112 @@ def create_app(database_path: Path | None = None) -> Flask:
             }
         )
 
+    @app.get("/api/routes")
+    def routes() -> Any:
+        """Return event routes backed by active plugins."""
+        with connect() as connection:
+            rows = connection.execute(
+                """SELECT er.event_type,er.target_plugin_name,pr.icon
+                     FROM event_routes er
+                     JOIN plugin_registry pr ON pr.plugin_name=er.target_plugin_name
+                    WHERE pr.is_active=1 ORDER BY er.event_type"""
+            ).fetchall()
+        return jsonify([dict(row) for row in rows])
+
+    @app.get("/api/scheduled-events")
+    def scheduled_events() -> Any:
+        with connect() as connection:
+            rows = connection.execute(
+                """SELECT id,event_type,payload,scheduled_time,status
+                     FROM scheduled_events ORDER BY scheduled_time DESC,id DESC LIMIT 250"""
+            ).fetchall()
+        records = []
+        for row in rows:
+            record = dict(row)
+            try:
+                record["payload"] = json.loads(record["payload"])
+            except json.JSONDecodeError:
+                record["payload"] = {}
+            records.append(record)
+        return jsonify(records)
+
+    @app.post("/api/scheduled-events")
+    def create_scheduled_event() -> Any:
+        body = request.get_json(silent=True) or {}
+        event_type = body.get("event_type")
+        scheduled_time = body.get("scheduled_time")
+        draft_path = body.get("draft_file")
+        if not all(isinstance(value, str) and value.strip() for value in (event_type, scheduled_time, draft_path)):
+            abort(400, description="event_type, scheduled_time en draft_file zijn verplicht")
+        try:
+            parsed_time = datetime.fromisoformat(scheduled_time.replace("Z", "+00:00"))
+        except ValueError:
+            abort(400, description="scheduled_time moet geldige ISO-8601 zijn")
+        if parsed_time.tzinfo is None:
+            abort(400, description="scheduled_time moet een tijdzone bevatten")
+        draft = safe_markdown_path("concepten", draft_path)
+        if not draft.is_file():
+            abort(404, description="Draft niet gevonden")
+        canonical_time = parsed_time.astimezone(timezone.utc).isoformat(timespec="seconds")
+        with connect() as connection:
+            route = connection.execute(
+                """SELECT 1 FROM event_routes er JOIN plugin_registry pr
+                     ON pr.plugin_name=er.target_plugin_name
+                    WHERE er.event_type=? AND pr.is_active=1""",
+                (event_type,),
+            ).fetchone()
+            if route is None:
+                abort(409, description=f"Geen actieve route voor {event_type}")
+            payload = json.dumps(
+                {"draft_file": str(draft), "source": "dashboard_scheduler"},
+                ensure_ascii=False,
+            )
+            cursor = connection.execute(
+                "INSERT INTO scheduled_events(event_type,payload,scheduled_time) VALUES (?,?,?)",
+                (event_type, payload, canonical_time),
+            )
+            connection.commit()
+        return jsonify({"id": int(cursor.lastrowid), "status": "PENDING", "scheduled_time": canonical_time}), 201
+
+    @app.delete("/api/scheduled-events/<int:schedule_id>")
+    def cancel_scheduled_event(schedule_id: int) -> Any:
+        with connect() as connection:
+            cursor = connection.execute(
+                "UPDATE scheduled_events SET status='CANCELLED' WHERE id=? AND status='PENDING'",
+                (schedule_id,),
+            )
+            connection.commit()
+        if cursor.rowcount != 1:
+            abort(409, description="Alleen een bestaande PENDING planning kan worden geannuleerd")
+        return jsonify({"id": schedule_id, "status": "CANCELLED"})
+
+    @app.get("/api/inbound/telegram")
+    def telegram_inbound_status() -> Any:
+        with connect() as connection:
+            plugin = connection.execute(
+                "SELECT plugin_name,is_active FROM plugin_registry WHERE plugin_name='Telegram Inbound Hub'"
+            ).fetchone()
+            recent = connection.execute(
+                """SELECT id,payload,created_at FROM events_queue
+                    WHERE event_type='TELEGRAM_INBOUND' ORDER BY id DESC LIMIT 10"""
+            ).fetchall()
+        items = []
+        for row in recent:
+            try:
+                payload = json.loads(row["payload"])
+            except json.JSONDecodeError:
+                payload = {}
+            items.append({"id": row["id"], "created_at": row["created_at"], "topic": payload.get("topic"), "draft_file": payload.get("draft_file")})
+        return jsonify(
+            {
+                "registered": plugin is not None,
+                "active": bool(plugin and plugin["is_active"]),
+                "token_configured": bool(os.getenv("TELEGRAM_BOT_TOKEN", "").strip()),
+                "media_files": len(list((VAULT_ROOT / "media").glob("*"))),
+                "recent": items,
+            }
+        )
+
     @app.get("/api/plugins")
     def plugins() -> Any:
         with connect() as connection:

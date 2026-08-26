@@ -1,0 +1,19 @@
+[Unit]
+Description=Social Engine Telegram inbound listener
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=infra
+Group=infra
+WorkingDirectory=/home/infra/dev
+EnvironmentFile=-/home/infra/dev/.env
+ExecStart=/home/infra/dev/venv/bin/python3 /home/infra/dev/plugins/inputs/telegram_in.py --db /home/infra/dev/db/events.db --auto-dispatch
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

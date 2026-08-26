@@ -2,6 +2,14 @@
 
 Alle plugins registreren zichzelf idempotent in `plugin_registry` en volgen het gedeelde CLI-contract `--register`, `--event_id` en `--db`.
 
+## Invoer
+
+### Telegram Inbound Hub
+
+Bestand: `plugins/inputs/telegram_in.py`
+
+Verwerkt tekst, foto's en video's via de Telegram Bot API. Configureer `TELEGRAM_BOT_TOKEN` in `.env`; beperk productie-invoer optioneel met `TELEGRAM_ALLOWED_CHAT_IDS`. De offline testmodus gebruikt `--mock-message`. Media wordt begrensd door `TELEGRAM_MAX_MEDIA_BYTES` (standaard 100 MiB).
+
 ## AI
 
 ### Lokale RTX 3090 Generator

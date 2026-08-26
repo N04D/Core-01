@@ -20,12 +20,21 @@ PENDING → PROCESSING → COMPLETED
 - `dead_letter_queue`: definitief mislukte events inclusief doodsoorzaak.
 - `event_routes`: stabiele eventtype-naar-pluginroutering.
 - `plugin_registry`: uitvoerbare plugininventaris met activatiestatus.
+- `scheduled_events`: toekomstige events met UTC-uitvoertijd en dispatchstatus.
 
 Initialiseren:
 
 ```bash
 ./venv/bin/python3 core/setup_database.py --database db/events.db
 ```
+
+## Publicatie-agenda
+
+`daemon/scheduler.py` claimt verlopen planningen met `BEGIN IMMEDIATE` en schrijft de planning en het nieuwe queue-event in één transactie weg. Hierdoor kan een planning niet dubbel worden gepubliceerd door concurrerende schedulers.
+
+## Inkomende Telegram-hub
+
+`plugins/inputs/telegram_in.py` pollt de Telegram Bot API, bewaart media in `vault/media/` en maakt een Markdown-concept met YAML-frontmatter in `vault/concepten/`. Elk bericht krijgt een afgerond `TELEGRAM_INBOUND` audit-event. Met `--auto-dispatch` ontstaan daarnaast publicatie-events voor uitsluitend actieve LinkedIn Pro-, Substack Pro- en Medium-routes.
 
 ## Worker-daemon
 

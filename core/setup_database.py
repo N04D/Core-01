@@ -56,6 +56,16 @@ SCHEMA: Final[dict[str, str]] = {
             is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1))
         )
     """,
+    "scheduled_events": """
+        CREATE TABLE IF NOT EXISTS scheduled_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            payload JSON NOT NULL CHECK (json_valid(payload)),
+            scheduled_time TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'PENDING'
+                CHECK (status IN ('PENDING', 'DISPATCHED', 'CANCELLED', 'FAILED'))
+        )
+    """,
 }
 
 

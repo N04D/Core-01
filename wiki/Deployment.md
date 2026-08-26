@@ -47,6 +47,8 @@ Units:
 
 - `deploy/social-worker.service`
 - `deploy/social-watchdog.service`
+- `deploy/social-scheduler.service`
+- `deploy/social-telegram-in.service`
 
 Installeren:
 
@@ -55,6 +57,8 @@ sudo ./deploy/install_services.sh
 ```
 
 Het installatiescript kopieert de units naar `/etc/systemd/system/`, voert `systemctl daemon-reload` uit en gebruikt `systemctl enable --now` voor beide services.
+
+De Telegram-unit wordt alleen automatisch gestart als `.env` een niet-lege `TELEGRAM_BOT_TOKEN` bevat; zonder credentials ontstaat dus geen herstartlus.
 
 Status en logs:
 
