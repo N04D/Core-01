@@ -88,6 +88,24 @@ een screenshot in `vault/logs/screenshots/`. Zonder
 met `substack_contacted: false`; ontbrekende media worden dan gerapporteerd in
 plaats van geüpload.
 
+### Medium Publisher
+
+Bestand: `plugins/channels/pub_medium_pro.py`
+
+Playwright-kanaal voor Medium-verhalen met:
+
+- Inline `--text` of Markdown via `draft_file`/`filepath`.
+- Automatische titel uit `title`, `topic` of de eerste Markdown-heading.
+- Een optionele JPG/PNG-header via `--image-path`.
+- Maximaal vijf genormaliseerde publicatietags via `--tags`.
+- `--dry-run` en configureerbare `--headless` browsermodus.
+- Automatische route `PUBLISH_MEDIUM` tijdens `--register`.
+- Fout-screenshots in `vault/logs/screenshots/`.
+
+Zonder `config/medium_auth.json` wordt een veilig `AUTH_REQUIRED`-resultaat in
+de eventpayload geschreven met `medium_contacted: false` en status
+`COMPLETED`; Medium wordt dan niet benaderd.
+
 ## Registreren en routeren
 
 ```bash
@@ -96,6 +114,7 @@ plaats van geüpload.
 ./venv/bin/python3 plugins/io/crawl_firecrawl.py --register --db db/events.db
 ./venv/bin/python3 plugins/channels/pub_linkedin_pro.py --register --db db/events.db
 ./venv/bin/python3 plugins/channels/pub_substack_pro.py --register --db db/events.db
+./venv/bin/python3 plugins/channels/pub_medium_pro.py --register --db db/events.db
 ```
 
 Routes kunnen idempotent via SQLite worden beheerd. Controleer ze met `scripts/system_status.py` voordat een productieflow start.
