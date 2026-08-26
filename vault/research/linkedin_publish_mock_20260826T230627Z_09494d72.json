@@ -1,0 +1,9 @@
+{
+  "mode": "publish",
+  "mock": true,
+  "linkedin_contacted": false,
+  "status": "AUTH_REQUIRED",
+  "published": false,
+  "text": "",
+  "media": []
+}

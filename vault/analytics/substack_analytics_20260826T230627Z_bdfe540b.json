@@ -1,0 +1,13 @@
+{
+  "mode": "analytics",
+  "mock": true,
+  "status": "AUTH_REQUIRED",
+  "substack_contacted": false,
+  "subscriber_growth": 0,
+  "posts": [
+    {
+      "views": 0,
+      "engagement": 0
+    }
+  ]
+}

@@ -54,3 +54,29 @@ Voorbeelden:
 ```
 
 Het dashboard toont integriteit, plugins, routes, recente events, retries en dead letters zonder de database te wijzigen.
+
+## Master Syndication Suite
+
+`playbooks/master_syndication_suite.py` voert de volledige productie-/testketen
+zelfstandig uit:
+
+1. Een diepgaand centraal essay via `AI_GENERATION`.
+2. Fan-out naar alle gevraagde, actieve routes (standaard LinkedIn Pro,
+   Substack Pro en Medium).
+3. Bounded workercycli tot alle events terminaal zijn.
+4. Analytics, comments en profielcontext voor plugins die deze capabilities
+   aanbieden.
+5. Een terminalrapport met eventstatussen, kanaalarchieven en insightartifacts.
+
+Veilige volledige mocktest:
+
+```bash
+./venv/bin/python3 playbooks/master_syndication_suite.py \
+  --topic "Soevereine AI Syndicatie" \
+  --db db/events.db \
+  --mock
+```
+
+Gebruik `--channels` om eventtypes te selecteren, `--image-path` voor een
+gedeelde JPG/PNG-asset en `--no-collect-insights` om de analysefase over te
+slaan.

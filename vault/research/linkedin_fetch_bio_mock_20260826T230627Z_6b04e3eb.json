@@ -1,0 +1,10 @@
+{
+  "mode": "fetch_bio",
+  "mock": true,
+  "linkedin_contacted": false,
+  "status": "AUTH_REQUIRED",
+  "name": "Mock LinkedIn-profiel",
+  "headline": "AUTH_REQUIRED — veilige lokale fallback",
+  "bio": "Geen profieldata opgehaald; LinkedIn is niet benaderd.",
+  "experience": []
+}

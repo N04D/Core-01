@@ -1,0 +1,12 @@
+{
+  "mode": "read_comments",
+  "mock": true,
+  "status": "AUTH_REQUIRED",
+  "substack_contacted": false,
+  "comments": [
+    {
+      "author": "Mock reader",
+      "text": "Auth required; no network request."
+    }
+  ]
+}
