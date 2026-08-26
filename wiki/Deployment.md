@@ -73,3 +73,15 @@ journalctl -u social-worker -u social-watchdog -f
 - [ ] `vault/`, `db/` en logmappen zijn schrijfbaar voor `infra`.
 - [ ] Mocktests slagen vóór live publicatie wordt ingeschakeld.
 - [ ] Dead-letter queue en screenshots worden operationeel gemonitord.
+
+## Lokaal dashboard
+
+De web-UI bindt standaard uitsluitend aan `127.0.0.1`:
+
+```bash
+./venv/bin/pip install -r dashboard/requirements.txt
+./venv/bin/python3 dashboard/run.py --db db/events.db
+```
+
+Open daarna `http://127.0.0.1:8080`. Gebruik `--host 0.0.0.0` alleen achter
+een vertrouwde firewall of reverse proxy met authenticatie.
