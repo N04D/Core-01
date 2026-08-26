@@ -25,6 +25,12 @@
     .EasyMDEContainer .CodeMirror-cursor { border-left-color:#a78bfa; }
     .EasyMDEContainer .CodeMirror-selected { background:#334155!important; }
     .EasyMDEContainer .editor-statusbar { color:#64748b; }
+    .EasyMDEContainer .editor-preview, .EasyMDEContainer .editor-preview-side { background:#11182a; color:#e2e8f0; border-color:rgba(255,255,255,.1); }
+    .EasyMDEContainer .editor-preview h1, .EasyMDEContainer .editor-preview h2, .EasyMDEContainer .editor-preview h3,
+    .EasyMDEContainer .editor-preview-side h1, .EasyMDEContainer .editor-preview-side h2, .EasyMDEContainer .editor-preview-side h3 { color:#fff; border-color:#334155; }
+    .EasyMDEContainer .editor-preview code, .EasyMDEContainer .editor-preview-side code { background:#0b1020; color:#ddd6fe; }
+    .EasyMDEContainer .editor-preview pre, .EasyMDEContainer .editor-preview-side pre { background:#0b1020; }
+    .EasyMDEContainer .editor-preview a, .EasyMDEContainer .editor-preview-side a { color:#a78bfa; }
   </style>
 </head>
 <body class="h-full text-slate-200 antialiased">
@@ -69,9 +75,8 @@
           <button id="new-file" class="rounded-xl bg-white/10 px-4 py-2 hover:bg-white/15">Nieuw</button>
           <button id="save-file" class="rounded-xl bg-accent px-5 py-2 font-medium text-white hover:brightness-110">Opslaan</button>
         </div>
-        <div class="grid overflow-hidden rounded-2xl border border-white/10 bg-panel lg:grid-cols-2">
-          <div class="min-w-0 border-b border-white/10 lg:border-b-0 lg:border-r"><textarea id="markdown-content" aria-label="Markdown editor"></textarea></div>
-          <article id="markdown-preview" class="prose prose-invert min-h-[65vh] max-w-none overflow-auto p-6 text-slate-300"></article>
+        <div class="overflow-hidden rounded-2xl border border-white/10 bg-panel">
+          <div class="min-w-0"><textarea id="markdown-content" aria-label="Markdown editor"></textarea></div>
         </div>
       </section>
 
@@ -110,7 +115,7 @@ function setEditorValue(value){if(easyMDE)easyMDE.value(value);else document.get
 function initEasyMDE(){if(easyMDE)return;if(typeof EasyMDE==='undefined'){flash('EasyMDE CDN kon niet worden geladen.',true);return}easyMDE=new EasyMDE({element:document.getElementById('markdown-content'),spellChecker:false,autofocus:false,forceSync:true,placeholder:'# Schrijf in Markdown…',status:['lines','words'],toolbar:['bold','italic','heading','|','quote','unordered-list','ordered-list','|','link','image','table','horizontal-rule','|','preview','side-by-side','fullscreen','|','guide'],renderingConfig:{singleLineBreaks:false}});easyMDE.codemirror.on('change',renderPreview);renderPreview()}
 async function loadEditorList(){initEasyMDE();const area=document.getElementById('editor-area').value;state.editorArea=area;const files=await api(`/api/files/${area}`);const select=document.getElementById('editor-file');select.innerHTML='<option value="">Selecteer bestand…</option>'+files.map(f=>`<option value="${esc(f.path.split('/').slice(1).join('/'))}">${esc(f.name)}</option>`).join('');state.editorPath=null;setEditorValue('')}
 async function loadEditorFile(){const path=document.getElementById('editor-file').value;if(!path)return;const data=await api(`/api/files/${state.editorArea}/${encodeURIComponent(path)}`);state.editorPath=path;setEditorValue(data.content);easyMDE?.codemirror.focus()}
-function renderPreview(){let text=editorValue();let html=esc(text).replace(/^### (.*)$/gm,'<h3 class="mt-5 text-lg font-semibold text-white">$1</h3>').replace(/^## (.*)$/gm,'<h2 class="mt-6 text-xl font-semibold text-white">$1</h2>').replace(/^# (.*)$/gm,'<h1 class="mb-5 text-3xl font-bold text-white">$1</h1>').replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/`([^`]+)`/g,'<code class="rounded bg-black/30 px-1">$1</code>').replace(/\n/g,'<br>');document.getElementById('markdown-preview').innerHTML=html}
+function renderPreview(){/* EasyMDE beheert preview en side-by-side intern. */}
 async function saveEditor(){if(!state.editorPath){flash('Kies of maak eerst een bestand.',true);return}await api(`/api/files/${state.editorArea}/${encodeURIComponent(state.editorPath)}`,{method:'PUT',body:JSON.stringify({content:editorValue()})});flash(`Opgeslagen: ${state.editorPath}`);const savedPath=state.editorPath;await loadEditorList();document.getElementById('editor-file').value=savedPath;state.editorPath=savedPath}
 async function loadDrafts(){const files=await api('/api/files/concepten');document.getElementById('draft-list').innerHTML=files.length?files.map(f=>`<div class="flex flex-wrap items-center gap-4 rounded-2xl border border-white/10 bg-panel p-5"><div class="min-w-0 flex-1"><div class="truncate font-medium text-white">${esc(f.name)}</div><div class="text-xs text-slate-500">${Math.round(f.size/1024)} KB · ${esc(f.modified_at)}</div></div><select id="channel-${esc(f.name)}" class="rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-sm"><option>PUBLISH_MOCK</option><option>PUBLISH_LINKEDIN</option><option>PUBLISH_SUBSTACK</option></select><button onclick="dispatchDraft('${encodeURIComponent(f.name)}','channel-${esc(f.name)}')" class="rounded-lg bg-accent px-4 py-2 text-sm font-medium">Naar workflow</button></div>`).join(''):'<p class="text-slate-500">Geen drafts.</p>'}
 async function dispatchDraft(path,selectId){const channel=document.getElementById(selectId).value;const d=await api(`/api/drafts/${path}/dispatch`,{method:'POST',body:JSON.stringify({channels:[channel]})});flash(`Event ${d.event_ids.join(', ')} op queue geplaatst`)}
