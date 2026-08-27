@@ -20,6 +20,7 @@ if __package__ in {None, ""}:
 from core.database import connect_database
 from core.processes import popen_process_group, terminate_process_group
 from core.setup_database import initialize_database
+from core.md_subject_parser import SubjectDocument, load_subject_document, select_next_subject
 
 PROJECT_ROOT: Final = Path(__file__).resolve().parents[1]
 DEFAULT_DB: Final = PROJECT_ROOT / "db/events.db"
@@ -133,6 +134,8 @@ NAMES: Final[tuple[tuple[str, str, str], ...]] = (
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
+    parser.add_argument("--config", type=Path, default=PROJECT_ROOT / "vault/prompts/nightcafe_99names.md",
+                        help="Markdown backlog/configuration (rules plus numbered subjects).")
     parser.add_argument("--date", default=date.today().isoformat())
     parser.add_argument("--live", action="store_true")
     parser.add_argument("--claim-daily", action="store_true")
@@ -154,6 +157,21 @@ def seed_names(db_path: Path) -> None:
         db.commit()
 
 
+def seed_names_from_document(db_path: Path, document: SubjectDocument) -> None:
+    """Mirror a Markdown backlog into the legacy run table for Media Store lineage."""
+    if len(document.subjects) > 99:
+        raise ValueError("NightCafe automation supports at most 99 subjects")
+    with connect_database(db_path) as db:
+        db.executemany(
+            """INSERT INTO nightcafe_names(sequence,arabic_name,transliteration,meaning)
+               VALUES (?,?,?,?) ON CONFLICT(sequence) DO UPDATE SET
+               arabic_name=excluded.arabic_name,transliteration=excluded.transliteration,meaning=excluded.meaning""",
+            ((subject.sequence, subject.title, subject.title, subject.context or subject.title)
+             for subject in document.subjects),
+        )
+        db.commit()
+
+
 def select_daily_name(db_path: Path, run_date: str):
     with connect_database(db_path) as db:
         existing = db.execute(
@@ -169,21 +187,23 @@ def select_daily_name(db_path: Path, run_date: str):
         return db.execute("SELECT * FROM nightcafe_names WHERE sequence=?", (sequence,)).fetchone()
 
 
-def fallback_prompt(name: str, meaning: str) -> str:
+def fallback_prompt(name: str, meaning: str, constraints: str = "") -> str:
     return (
         f"A contemplative fine-art visual inspired by {name}, {meaning}; symbolic rather than figurative, "
         "luminous sacred geometry, intricate arabesque patterns, celestial atmosphere, deep indigo and warm gold, "
         "volumetric light, museum-quality composition, cinematic detail, respectful Islamic aesthetic, "
         "no depiction of Allah, no people, no faces, no readable text, no watermark, high resolution"
+        + (f"; {constraints.replace(chr(10), '; ')}" if constraints else "")
     )
 
 
-def generate_prompt(name: str, meaning: str, timeout: int) -> str:
+def generate_prompt(name: str, meaning: str, timeout: int, constraints: str = "") -> str:
     command = shlex.split(os.getenv("LOCAL_LLM_COMMAND", "ollama run llama3.1:8b"))
     instruction = (
         "Return only one image-generation prompt, at most 120 words. Create a respectful symbolic artwork "
         f"inspired by the Divine Name {name} ({meaning}). Include composition, palette, light, medium and negative "
-        "constraints. Never depict Allah; avoid people, faces, readable text and watermarks."
+        "constraints. Never depict Allah; avoid people, faces, readable text and watermarks.\n"
+        f"Strict Markdown configuration rules:\n{constraints}"
     )
     process = None
     try:
@@ -195,7 +215,7 @@ def generate_prompt(name: str, meaning: str, timeout: int) -> str:
     except (OSError, subprocess.TimeoutExpired):
         if process is not None:
             terminate_process_group(process)
-    return fallback_prompt(name, meaning)
+    return fallback_prompt(name, meaning, constraints)
 
 
 def run_automation(args: argparse.Namespace, row, prompt: str) -> dict[str, object]:
@@ -221,10 +241,22 @@ def main() -> int:
     args = parse_args()
     args.db = args.db.expanduser().resolve()
     initialize_database(args.db)
-    seed_names(args.db)
-    row = select_daily_name(args.db, args.date)
-    prompt = generate_prompt(row["transliteration"], row["meaning"], args.llm_timeout)
-    LOGGER.info("Selected %02d/99 %s — %s", row["sequence"], row["transliteration"], row["meaning"])
+    document = load_subject_document(args.config.expanduser().resolve())
+    generator_key = f"nightcafe:{document.path}"
+    seed_names_from_document(args.db, document)
+    with connect_database(args.db) as db:
+        existing = db.execute("SELECT name_sequence FROM nightcafe_daily_runs WHERE run_date=?", (args.date,)).fetchone()
+    if existing:
+        subject = document.subjects[int(existing[0]) - 1]
+    else:
+        subject = select_next_subject(args.db, document, generator_key)
+        with connect_database(args.db) as db:
+            db.execute("INSERT INTO nightcafe_daily_runs(run_date,name_sequence) VALUES (?,?)", (args.date, subject.sequence))
+            db.commit()
+    with connect_database(args.db) as db:
+        row = db.execute("SELECT * FROM nightcafe_names WHERE sequence=?", (subject.sequence,)).fetchone()
+    prompt = generate_prompt(subject.title, subject.context or subject.title, args.llm_timeout, document.prompt_constraints())
+    LOGGER.info("Selected %02d/%02d %s — %s", subject.sequence, len(document.subjects), subject.title, subject.context)
     try:
         result = run_automation(args, row, prompt)
         with connect_database(args.db) as db:

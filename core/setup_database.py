@@ -148,6 +148,14 @@ SCHEMA: Final[dict[str, str]] = {
             UNIQUE(name_sequence, run_date)
         )
     """,
+    "subject_generator_state": """
+        CREATE TABLE IF NOT EXISTS subject_generator_state (
+            generator_key TEXT PRIMARY KEY,
+            next_sequence INTEGER NOT NULL DEFAULT 1 CHECK (next_sequence > 0),
+            last_item_key TEXT,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """,
     "rag_documents": """
         CREATE TABLE IF NOT EXISTS rag_documents (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -290,6 +298,8 @@ INDEXES: Final[tuple[str, ...]] = (
     "ON dead_letter_redrives(dead_letter_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_nightcafe_runs_status_date "
     "ON nightcafe_daily_runs(status, run_date)",
+    "CREATE INDEX IF NOT EXISTS idx_subject_generator_state_updated "
+    "ON subject_generator_state(updated_at)",
 )
 
 
