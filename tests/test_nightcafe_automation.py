@@ -12,7 +12,7 @@ from pathlib import Path
 from core.database import connect_database
 from core.setup_database import initialize_database
 from playbooks.nightcafe_99names import NAMES, seed_names, select_daily_name
-from plugins.media.nightcafe_automation import navigate_to_create_surface, validated_auth
+from plugins.media.nightcafe_automation import browser_context_options, navigate_to_create_surface, validated_auth
 
 
 class _VisibleLocator:
@@ -150,6 +150,23 @@ class NightCafeWorkflowTests(unittest.TestCase):
         navigate_to_create_surface(page, 1000)
         self.assertEqual(page.goto_calls[0], "https://creator.nightcafe.studio/")
         self.assertTrue(page.create.clicked)
+
+    def test_browser_context_uses_configured_compatibility_profile(self) -> None:
+        import os
+        previous = {key: os.environ.get(key) for key in ("NIGHTCAFE_USER_AGENT", "NIGHTCAFE_VIEWPORT_WIDTH")}
+        try:
+            os.environ["NIGHTCAFE_USER_AGENT"] = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36"
+            os.environ["NIGHTCAFE_VIEWPORT_WIDTH"] = "1440"
+            options = browser_context_options()
+            self.assertEqual(options["viewport"]["width"], 1440)
+            self.assertIn("user_agent", options)
+            self.assertNotIn("args", options)
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
 
 if __name__ == "__main__":

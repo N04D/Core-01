@@ -200,6 +200,22 @@ def navigate_to_create_surface(page: object, timeout: int) -> None:
         page.goto(create_url, wait_until="domcontentloaded", timeout=timeout)
 
 
+def browser_context_options() -> dict[str, object]:
+    """Return compatibility options without modifying browser fingerprints or webdriver flags."""
+    options: dict[str, object] = {
+        "viewport": {
+            "width": int(os.getenv("NIGHTCAFE_VIEWPORT_WIDTH", "1365")),
+            "height": int(os.getenv("NIGHTCAFE_VIEWPORT_HEIGHT", "768")),
+        },
+        "locale": os.getenv("NIGHTCAFE_LOCALE", "en-US"),
+        "timezone_id": os.getenv("NIGHTCAFE_TIMEZONE", "Europe/Paris"),
+    }
+    configured_ua = os.getenv("NIGHTCAFE_USER_AGENT", "").strip()
+    if configured_ua:
+        options["user_agent"] = configured_ua
+    return options
+
+
 def write_mock(output: Path, metadata: dict[str, object]) -> Path:
     serialized = json.dumps(metadata, ensure_ascii=False, sort_keys=True).encode("utf-8")
     # PNG readers ignore trailing bytes; the digest remains unique per simulated daily asset.
@@ -214,7 +230,7 @@ def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
     trace_path: str | None = None
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=args.headless)
-        context = browser.new_context(storage_state=str(args.auth))
+        context = browser.new_context(storage_state=str(args.auth), **browser_context_options())
         page = context.new_page()
         try:
             navigate_to_create_surface(page, args.timeout)
