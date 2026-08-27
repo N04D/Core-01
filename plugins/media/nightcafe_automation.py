@@ -161,6 +161,45 @@ def load_event(db_path: Path, event_id: int) -> dict[str, object]:
     return payload
 
 
+def navigate_to_create_surface(page: object, timeout: int) -> None:
+    """Open the creator from the authenticated overview before locating its prompt field."""
+    home_url = os.getenv("NIGHTCAFE_HOME_URL", "https://creator.nightcafe.studio/")
+    create_url = os.getenv("NIGHTCAFE_CREATE_URL", "https://creator.nightcafe.studio/create")
+    page.goto(home_url, wait_until="domcontentloaded", timeout=timeout)
+    try:
+        title = str(page.title())
+        body = str(page.locator("body").inner_text(timeout=2_000))
+    except Exception:
+        title, body = "", ""
+    if "just a moment" in title.casefold() or "security verification" in body.casefold() or "cloudflare" in body.casefold():
+        raise RuntimeError("Cloudflare bot verification blocked the NightCafe overview; complete it in a real browser session")
+    # A session may already land on the creator surface after authentication.
+    try:
+        find_prompt_input(page, timeout=min(timeout, 3_000))
+        return
+    except LookupError:
+        pass
+    create_button = find_control(
+        page,
+        roles=(("button", re.compile(r"^(?:create|start creating|new creation|generate)$", re.I)),
+               ("link", re.compile(r"^(?:create|start creating|new creation|generate)$", re.I))),
+        labels=(re.compile(r"create|start creating|new creation|generate", re.I),),
+        css=("a[href*='/create']", "a[href*='/studio']", "button[data-testid*='create' i]"),
+        timeout=timeout,
+    )
+    before_url = str(getattr(page, "url", ""))
+    create_button.click()
+    try:
+        page.wait_for_url(lambda url: str(url) != before_url, timeout=max(1_000, timeout // 2))
+    except Exception:
+        # Some SPAs keep the same URL; the prompt lookup below is the confirmation.
+        pass
+    try:
+        find_prompt_input(page, timeout=max(1_000, timeout // 2))
+    except LookupError:
+        page.goto(create_url, wait_until="domcontentloaded", timeout=timeout)
+
+
 def write_mock(output: Path, metadata: dict[str, object]) -> Path:
     serialized = json.dumps(metadata, ensure_ascii=False, sort_keys=True).encode("utf-8")
     # PNG readers ignore trailing bytes; the digest remains unique per simulated daily asset.
@@ -178,7 +217,7 @@ def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
         context = browser.new_context(storage_state=str(args.auth))
         page = context.new_page()
         try:
-            page.goto(os.getenv("NIGHTCAFE_CREATE_URL", "https://creator.nightcafe.studio/create"), wait_until="domcontentloaded", timeout=args.timeout)
+            navigate_to_create_surface(page, args.timeout)
             if args.claim_daily:
                 page.goto("https://creator.nightcafe.studio/notifications", wait_until="domcontentloaded", timeout=args.timeout)
                 try:
@@ -190,7 +229,7 @@ def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
                     LOGGER.info("Daily credit top-up claim submitted")
                 except Exception:
                     LOGGER.info("No claimable daily top-up was visible")
-                page.goto(os.getenv("NIGHTCAFE_CREATE_URL", "https://creator.nightcafe.studio/create"), wait_until="domcontentloaded", timeout=args.timeout)
+                navigate_to_create_surface(page, args.timeout)
             prompt_box = find_prompt_input(page, timeout=15_000)
             prompt_box.fill(args.prompt)
             find_control(

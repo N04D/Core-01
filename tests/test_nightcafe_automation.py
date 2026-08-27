@@ -12,7 +12,45 @@ from pathlib import Path
 from core.database import connect_database
 from core.setup_database import initialize_database
 from playbooks.nightcafe_99names import NAMES, seed_names, select_daily_name
-from plugins.media.nightcafe_automation import validated_auth
+from plugins.media.nightcafe_automation import navigate_to_create_surface, validated_auth
+
+
+class _VisibleLocator:
+    def __init__(self, visible: bool = True):
+        self.visible = visible
+        self.clicked = False
+    @property
+    def first(self):
+        return self
+    def wait_for(self, **_kwargs):
+        if not self.visible:
+            raise TimeoutError("hidden")
+    def click(self):
+        self.clicked = True
+
+
+class _OverviewPage:
+    url = "https://creator.nightcafe.studio/"
+    def __init__(self):
+        self.create = _VisibleLocator(True)
+        self.goto_calls = []
+    def goto(self, url, **_kwargs):
+        self.goto_calls.append(url)
+        self.url = url
+    def title(self):
+        return "NightCafe"
+    def locator(self, selector):
+        if selector == "body":
+            return _VisibleLocator(True)
+        return _VisibleLocator(False)
+    def get_by_role(self, role, **_kwargs):
+        return self.create if role in {"button", "link"} else _VisibleLocator(False)
+    def get_by_label(self, _label):
+        return _VisibleLocator(False)
+    def get_by_placeholder(self, _placeholder):
+        return _VisibleLocator(False)
+    def wait_for_url(self, *_args, **_kwargs):
+        return None
 
 
 class NightCafeWorkflowTests(unittest.TestCase):
@@ -106,6 +144,12 @@ class NightCafeWorkflowTests(unittest.TestCase):
         }]}), encoding="utf-8")
         with self.assertRaises(PermissionError):
             validated_auth(auth)
+
+    def test_overview_create_action_is_attempted_before_prompt_lookup(self) -> None:
+        page = _OverviewPage()
+        navigate_to_create_surface(page, 1000)
+        self.assertEqual(page.goto_calls[0], "https://creator.nightcafe.studio/")
+        self.assertTrue(page.create.clicked)
 
 
 if __name__ == "__main__":
