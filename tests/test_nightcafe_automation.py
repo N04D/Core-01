@@ -12,7 +12,7 @@ from pathlib import Path
 from core.database import connect_database
 from core.setup_database import initialize_database
 from playbooks.nightcafe_99names import NAMES, seed_names, select_daily_name
-from plugins.media.nightcafe_automation import browser_context_options, has_external_session, navigate_to_create_surface, validated_auth
+from plugins.media.nightcafe_automation import browser_context_options, click_with_overlay_fallback, has_external_session, navigate_to_create_surface, validated_auth
 
 
 class _VisibleLocator:
@@ -51,6 +51,18 @@ class _OverviewPage:
         return _VisibleLocator(False)
     def wait_for_url(self, *_args, **_kwargs):
         return None
+
+
+class _InterceptedLocator:
+    def __init__(self):
+        self.calls = []
+    def click(self, **kwargs):
+        self.calls.append(kwargs)
+        if not kwargs.get("force"):
+            raise RuntimeError("pointer events intercepted")
+        raise RuntimeError("overlay remains")
+    def evaluate(self, _script):
+        self.calls.append("js")
 
 
 class NightCafeWorkflowTests(unittest.TestCase):
@@ -173,6 +185,11 @@ class NightCafeWorkflowTests(unittest.TestCase):
         self.assertTrue(has_external_session(Namespace(cdp_url="http://127.0.0.1:9222", user_data_dir=None)))
         self.assertTrue(has_external_session(Namespace(cdp_url=None, user_data_dir=Path(self.root / "profile"))))
         self.assertFalse(has_external_session(Namespace(cdp_url=None, user_data_dir=None)))
+
+    def test_create_click_escalates_to_force_and_dom_click(self) -> None:
+        control = _InterceptedLocator()
+        click_with_overlay_fallback(control)
+        self.assertEqual(control.calls, [{}, {"force": True}, "js"])
 
 
 if __name__ == "__main__":

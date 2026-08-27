@@ -163,6 +163,59 @@ def load_event(db_path: Path, event_id: int) -> dict[str, object]:
     return payload
 
 
+def dismiss_overlays(page: object, timeout: int = 2_000) -> int:
+    """Dismiss known consent/support widgets without hiding creator dialogs."""
+    dismissed = 0
+    close_names = re.compile(r"close|dismiss|not now|later|reject optional", re.I)
+    try:
+        close = find_control(
+            page,
+            roles=(("button", close_names), ("link", close_names)),
+            labels=(close_names,),
+            css=("[aria-label*='close' i]", "[data-testid*='close' i]"),
+            timeout=timeout,
+        )
+        close.click()
+        dismissed += 1
+    except Exception:
+        pass
+    selectors = (
+        "#onetrust-banner-sdk", "[id*='cookie' i]", "[class*='cookie' i]",
+        "[id*='community-support' i]", "[class*='community-support' i]",
+        "[id*='support-widget' i]", "[class*='support-widget' i]",
+        "[id*='intercom' i]", "[class*='intercom' i]",
+    )
+    try:
+        page.evaluate(
+            """selectors => selectors.forEach(selector => document.querySelectorAll(selector).forEach(node => {
+                node.setAttribute('aria-hidden', 'true');
+                node.style.setProperty('display', 'none', 'important');
+            }))""",
+            list(selectors),
+        )
+    except Exception:
+        pass
+    return dismissed
+
+
+def click_with_overlay_fallback(control: object) -> None:
+    """Escalate a click only on the already-selected Create control."""
+    try:
+        control.click()
+        return
+    except Exception as normal_error:
+        LOGGER.warning("Create click intercepted; retrying with force click: %s", normal_error)
+    try:
+        control.click(force=True)
+        return
+    except Exception as force_error:
+        LOGGER.warning("Force click failed; invoking DOM click fallback: %s", force_error)
+    try:
+        control.evaluate("element => element.click()")
+    except Exception as js_error:
+        raise RuntimeError(f"Create action remained blocked by an overlay: {js_error}") from js_error
+
+
 def navigate_to_create_surface(page: object, timeout: int) -> None:
     """Open the creator from the authenticated overview before locating its prompt field."""
     home_url = os.getenv("NIGHTCAFE_HOME_URL", "https://creator.nightcafe.studio/")
@@ -181,6 +234,7 @@ def navigate_to_create_surface(page: object, timeout: int) -> None:
         return
     except LookupError:
         pass
+    dismiss_overlays(page)
     create_button = find_control(
         page,
         roles=(("button", re.compile(r"^(?:create|start creating|new creation|generate)$", re.I)),
@@ -190,7 +244,7 @@ def navigate_to_create_surface(page: object, timeout: int) -> None:
         timeout=timeout,
     )
     before_url = str(getattr(page, "url", ""))
-    create_button.click()
+    click_with_overlay_fallback(create_button)
     try:
         page.wait_for_url(lambda url: str(url) != before_url, timeout=max(1_000, timeout // 2))
     except Exception:
