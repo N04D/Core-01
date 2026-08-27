@@ -224,6 +224,8 @@ def run_automation(args: argparse.Namespace, row, prompt: str) -> dict[str, obje
                "--run-date", args.date]
     if args.live:
         command.append("--live")
+    else:
+        command.append("--simulate")
     if args.claim_daily:
         command.append("--claim-daily")
     command.append("--headless" if args.headless else "--no-headless")

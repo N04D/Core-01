@@ -12,6 +12,7 @@ import mimetypes
 import os
 import re
 import sys
+import stat
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Final
@@ -21,6 +22,7 @@ if __package__ in {None, ""}:
 
 from core.browser_robustness import capture_sanitized_diagnostic, find_control
 from core.database import connect_database
+from core.event_protocol import emit_result
 
 PROJECT_ROOT: Final = Path(__file__).resolve().parents[2]
 DEFAULT_DB: Final = PROJECT_ROOT / "db" / "events.db"
@@ -36,20 +38,27 @@ MOCK_PNG: Final = base64.b64decode(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--register", action="store_true", help="Register plugin and event route, then exit.")
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
-    parser.add_argument("--prompt", required=True)
-    parser.add_argument("--name", required=True)
-    parser.add_argument("--sequence", type=int, required=True)
-    parser.add_argument("--run-date", required=True)
+    parser.add_argument("--event_id", type=int)
+    parser.add_argument("--prompt")
+    parser.add_argument("--name")
+    parser.add_argument("--sequence", type=int)
+    parser.add_argument("--run-date")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--auth", type=Path, default=DEFAULT_AUTH)
     parser.add_argument("--live", action="store_true", help="Allow a real external generation.")
+    parser.add_argument("--simulate", action="store_true", help="Explicit local test mode; never contacts NightCafe.")
     parser.add_argument("--claim-daily", action="store_true", help="Claim an available daily top-up in live mode.")
     parser.add_argument("--headless", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--timeout", type=int, default=180_000)
     args = parser.parse_args()
-    if not 1 <= args.sequence <= 99 or args.timeout < 10_000:
-        parser.error("sequence must be 1..99 and timeout at least 10000 ms")
+    if args.event_id is not None and args.event_id < 1:
+        parser.error("event_id must be positive")
+    if args.sequence is not None and not 1 <= args.sequence <= 99:
+        parser.error("sequence must be 1..99")
+    if args.timeout < 10_000:
+        parser.error("timeout must be at least 10000 ms")
     return args
 
 
@@ -57,16 +66,27 @@ def safe_stem(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")[:60] or "name"
 
 
-def register_asset(db_path: Path, path: Path, prompt: str, metadata: dict[str, object]) -> int:
-    external_id = hashlib.sha256(path.read_bytes()).hexdigest()
-    mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+def register_plugin(db_path: Path) -> None:
+    """Register NightCafe as a media plugin and bind its event-bus route."""
     with connect_database(db_path) as db:
         db.execute(
             """INSERT INTO plugin_registry(plugin_name,type,executable_path,icon,is_active)
                VALUES (?,?,?,?,1) ON CONFLICT(plugin_name) DO UPDATE SET
-               executable_path=excluded.executable_path,is_active=1""",
+               executable_path=excluded.executable_path,icon=excluded.icon,is_active=1""",
             (PLUGIN_NAME, "media", str(Path(__file__).resolve()), "🌙"),
         )
+        db.execute(
+            """INSERT INTO event_routes(event_type,target_plugin_name) VALUES (?,?)
+               ON CONFLICT(event_type) DO UPDATE SET target_plugin_name=excluded.target_plugin_name""",
+            ("NIGHTCAFE_GENERATE", PLUGIN_NAME),
+        )
+        db.commit()
+
+
+def register_asset(db_path: Path, path: Path, prompt: str, metadata: dict[str, object]) -> int:
+    external_id = hashlib.sha256(path.read_bytes()).hexdigest()
+    mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    with connect_database(db_path) as db:
         db.execute(
             """INSERT INTO media_sources(source_key,display_name,provider,root_path,config,is_active,last_indexed_at)
                VALUES (?,?,?,?,?,1,CURRENT_TIMESTAMP) ON CONFLICT(source_key) DO UPDATE SET
@@ -91,6 +111,48 @@ def register_asset(db_path: Path, path: Path, prompt: str, metadata: dict[str, o
         ).fetchone()[0])
         db.commit()
         return asset_id
+
+
+def validated_auth(path: Path) -> Path:
+    """Validate a private Playwright storage-state file and its cookie freshness."""
+    auth = path.expanduser().resolve()
+    if not auth.is_file():
+        raise PermissionError(f"NightCafe authentication required: missing {auth}")
+    mode = stat.S_IMODE(auth.stat().st_mode)
+    if mode & (stat.S_IRWXG | stat.S_IRWXO):
+        raise PermissionError(f"NightCafe auth state must have mode 0600 (found {mode:o})")
+    try:
+        state = json.loads(auth.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"NightCafe auth state is not valid JSON: {exc}") from exc
+    if not isinstance(state, dict):
+        raise ValueError("NightCafe auth state must be a JSON object")
+    cookies = state.get("cookies")
+    origins = state.get("origins")
+    if not isinstance(cookies, list) or not isinstance(origins, list):
+        raise ValueError("NightCafe auth state must contain Playwright cookies and origins arrays")
+    if not cookies and not origins:
+        raise PermissionError("NightCafe auth state contains no session data")
+    required_domains = ("nightcafe",)
+    relevant = [cookie for cookie in cookies if isinstance(cookie, dict) and any(domain in str(cookie.get("domain", "")) for domain in required_domains)]
+    if cookies and not relevant:
+        raise PermissionError("NightCafe auth state contains no NightCafe cookie")
+    import time
+    expiring = [cookie for cookie in relevant if cookie.get("expires") is not None and float(cookie.get("expires", -1)) > 0]
+    if expiring and all(float(cookie["expires"]) <= time.time() for cookie in expiring):
+        raise PermissionError("NightCafe authentication cookies have expired")
+    return auth
+
+
+def load_event(db_path: Path, event_id: int) -> dict[str, object]:
+    with connect_database(db_path) as db:
+        row = db.execute("SELECT payload FROM events_queue WHERE id=?", (event_id,)).fetchone()
+    if row is None:
+        raise LookupError(f"event {event_id} does not exist")
+    payload = json.loads(row["payload"])
+    if not isinstance(payload, dict):
+        raise ValueError("event payload must be a JSON object")
+    return payload
 
 
 def write_mock(output: Path, metadata: dict[str, object]) -> Path:
@@ -181,6 +243,19 @@ def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
 def main() -> int:
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     args = parse_args()
+    args.db = args.db.expanduser().resolve()
+    register_plugin(args.db)
+    if args.register and args.event_id is None and args.prompt is None:
+        print(json.dumps({"status": "REGISTERED", "plugin": PLUGIN_NAME, "event_type": "NIGHTCAFE_GENERATE"}))
+        return 0
+    if args.event_id is not None:
+        payload = load_event(args.db, args.event_id)
+        args.prompt = args.prompt or str(payload.get("prompt") or payload.get("content") or "")
+        args.name = args.name or str(payload.get("name") or "Daily subject")
+        args.sequence = args.sequence or int(payload.get("sequence", 1))
+        args.run_date = args.run_date or str(payload.get("run_date") or datetime.now(timezone.utc).date().isoformat())
+    if not all((args.prompt, args.name, args.sequence, args.run_date)):
+        raise SystemExit("--prompt, --name, and --run-date are required unless --event_id supplies them")
     output_dir = args.output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     output = output_dir / f"{args.run_date}_{args.sequence:02d}_{safe_stem(args.name)}.png"
@@ -189,23 +264,34 @@ def main() -> int:
         "prompt": args.prompt, "generator": PLUGIN_NAME,
     }
     try:
-        if not args.live or not args.auth.is_file():
+        if args.simulate:
             metadata["mode"] = "SIMULATED"
-            metadata["auth_required"] = not args.auth.is_file()
             write_mock(output, metadata)
             status = "SIMULATED"
-            LOGGER.warning("Safe simulation used; live=%s auth_present=%s", args.live, args.auth.is_file())
         else:
+            validated_auth(args.auth)
+            if not args.live:
+                raise PermissionError("NightCafe live generation requires --live; use --simulate only for explicit tests")
             output, platform_url = run_live(args, output)
             metadata.update({"mode": "LIVE", "platform_url": platform_url})
             output.with_suffix(".json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
             status = "COMPLETED"
         asset_id = register_asset(args.db, output, args.prompt, metadata)
-        print(json.dumps({"status": status, "asset_id": asset_id, "output_path": str(output)}, ensure_ascii=False))
+        result = {"status": status, "asset_id": asset_id, "output_path": str(output)}
+        if args.event_id is not None:
+            emit_result(status, result=result, payload_patch={"nightcafe": result})
+        else:
+            print(json.dumps(result, ensure_ascii=False))
         return 0
     except Exception as exc:
         LOGGER.exception("NightCafe generation failed")
-        print(json.dumps({"status": "FAILED", "error": str(exc)}))
+        blocked = isinstance(exc, (PermissionError, ValueError)) and ("auth" in str(exc).lower() or "authentication" in str(exc).lower())
+        outcome = "BLOCKED_AUTH" if blocked else "FAILED"
+        result = {"status": "AUTH_REQUIRED" if blocked else "FAILED", "error": str(exc)}
+        if args.event_id is not None:
+            emit_result(outcome, result=result, error=str(exc), retryable=False)
+            return 0
+        print(json.dumps({"status": outcome, "error": str(exc)}))
         return 1
 
 

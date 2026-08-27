@@ -42,6 +42,7 @@ class NightCafeWorkflowTests(unittest.TestCase):
                 __import__("sys").executable, str(script), "--db", str(self.database),
                 "--prompt", "symbolic light", "--name", "Ar-Rahman", "--sequence", "1",
                 "--run-date", "2026-08-27", "--output-dir", str(output),
+                "--simulate",
             ],
             text=True, capture_output=True, check=True,
         )
@@ -53,6 +54,36 @@ class NightCafeWorkflowTests(unittest.TestCase):
             asset = db.execute("SELECT metadata FROM media_assets WHERE id=?", (result["asset_id"],)).fetchone()
         self.assertEqual(source[0], "NightCafe - 99 Names")
         self.assertEqual(json.loads(asset[0])["name"], "Ar-Rahman")
+        with connect_database(self.database) as db:
+            route = db.execute("SELECT target_plugin_name FROM event_routes WHERE event_type='NIGHTCAFE_GENERATE'").fetchone()
+        self.assertEqual(route[0], "NightCafe Daily Stock Generator")
+
+    def test_missing_auth_returns_blocked_auth_event_envelope(self) -> None:
+        script = Path(__file__).resolve().parents[1] / "plugins/media/nightcafe_automation.py"
+        with connect_database(self.database) as db:
+            db.execute("INSERT INTO events_queue(event_type,payload) VALUES ('NIGHTCAFE_GENERATE',?)", ('{"prompt":"x","name":"Ar-Rahman","sequence":1}',))
+            event_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
+            db.commit()
+        completed = subprocess.run(
+            [__import__("sys").executable, str(script), "--db", str(self.database), "--event_id", str(event_id), "--auth", str(self.root / "missing.json")],
+            text=True, capture_output=True, check=True,
+        )
+        self.assertIn('"outcome":"BLOCKED_AUTH"', completed.stdout)
+        self.assertIn("AUTH_REQUIRED", completed.stdout)
+
+    def test_worker_commits_blocked_auth_status(self) -> None:
+        script = Path(__file__).resolve().parents[1] / "plugins/media/nightcafe_automation.py"
+        worker = Path(__file__).resolve().parents[1] / "daemon/worker.py"
+        with connect_database(self.database) as db:
+            db.execute("INSERT INTO plugin_registry(plugin_name,type,executable_path,icon,is_active) VALUES (?,?,?,?,1)",
+                       ("NightCafe Daily Stock Generator", "media", str(script), "🌙"))
+            db.execute("INSERT INTO event_routes(event_type,target_plugin_name) VALUES ('NIGHTCAFE_GENERATE','NightCafe Daily Stock Generator')")
+            db.execute("INSERT INTO events_queue(event_type,payload) VALUES ('NIGHTCAFE_GENERATE',?)", ('{"prompt":"x","name":"Ar-Rahman","sequence":1}',))
+            db.commit()
+        subprocess.run([__import__("sys").executable, str(worker), "--database", str(self.database), "--once"], check=True, text=True, capture_output=True)
+        with connect_database(self.database) as db:
+            status = db.execute("SELECT status FROM events_queue WHERE event_type='NIGHTCAFE_GENERATE'").fetchone()[0]
+        self.assertEqual(status, "BLOCKED_AUTH")
 
 
 if __name__ == "__main__":
