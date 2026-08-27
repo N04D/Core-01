@@ -20,7 +20,8 @@ PROJECT_ROOT: Final = Path(__file__).resolve().parent.parent
 DEFAULT_DATABASE: Final = PROJECT_ROOT / "db" / "events.db"
 DEFAULT_SKILL: Final = PROJECT_ROOT / "vault" / "skills" / "master_workflow.md"
 LOGGER: Final = logging.getLogger("master_workflow")
-TERMINAL_STATUSES: Final = {"COMPLETED", "FAILED"}
+TERMINAL_STATUSES: Final = {"COMPLETED", "SIMULATED", "BLOCKED_AUTH", "FAILED"}
+SUCCESS_STATUSES: Final = {"COMPLETED", "SIMULATED"}
 SUPPORTED_CHANNELS: Final = ("PUBLISH_MOCK", "PUBLISH_LINKEDIN")
 
 
@@ -177,16 +178,16 @@ def dispatch_and_wait(
             )
             last_status = status
 
-        if status == "COMPLETED":
+        if status in SUCCESS_STATUSES:
             try:
                 decoded = json.loads(row["payload"])
             except json.JSONDecodeError as exc:
                 raise EventFailed(event_id, event_type, "invalid result payload") from exc
             if not isinstance(decoded, dict):
                 raise EventFailed(event_id, event_type, "result payload is not an object")
-            LOGGER.info("COMPLETE ✓ id=%s type=%s", event_id, event_type)
+            LOGGER.info("TERMINAL ✓ id=%s type=%s status=%s", event_id, event_type, status)
             return EventResult(event_id, event_type, decoded)
-        if status == "FAILED":
+        if status in {"FAILED", "BLOCKED_AUTH"}:
             raise EventFailed(
                 event_id, event_type, row["error_log"] or "unknown plugin failure"
             )

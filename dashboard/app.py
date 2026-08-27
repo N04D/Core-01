@@ -411,7 +411,7 @@ def create_app(database_path: Path | None = None) -> Flask:
             records.append(
                 {
                     "id": row["id"], "kind": "schedule", "channel": row["event_type"],
-                    "status_group": "ERROR" if row["status"] in {"FAILED", "CANCELLED"} else "SCHEDULED",
+                    "status_group": "ERROR" if row["status"] in {"FAILED", "BLOCKED_AUTH", "CANCELLED"} else "SCHEDULED",
                     "status": row["status"], "timestamp": row["scheduled_time"], "payload": payload,
                     "content_type": media["content_type"] if media else payload.get("content_type", "text"), "media": media,
                 }

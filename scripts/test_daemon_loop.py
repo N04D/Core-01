@@ -81,10 +81,10 @@ def main() -> int:
         f"[OK] Eindstatus: status={status} retry_count={retry_count} "
         f"error_log={error_log!r}"
     )
-    if status != "COMPLETED" or retry_count != 0 or error_log is not None:
+    if status != "SIMULATED" or retry_count != 0 or error_log is not None:
         raise RuntimeError("worker heeft het test-event niet succesvol afgehandeld")
 
-    print("[PASS] Daemon claimde, routeerde en voltooide het event automatisch.")
+    print("[PASS] Daemon claimde, routeerde en simuleerde het event automatisch.")
     return 0
 
 

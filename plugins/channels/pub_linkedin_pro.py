@@ -18,6 +18,9 @@ from typing import Any, Final, Iterator
 from urllib.parse import urlparse
 from uuid import uuid4
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from core.event_protocol import begin_submission, emit_result, update_publication
+
 
 PLUGIN_NAME: Final = "LinkedIn Pro Publisher & Analytics"
 PLUGIN_TYPE: Final = "channel"
@@ -123,33 +126,6 @@ def load_payload(connection: sqlite3.Connection, event_id: int) -> dict[str, Any
     if not isinstance(payload, dict):
         raise ValueError("event payload must be a JSON object")
     return payload
-
-
-def update_event(
-    connection: sqlite3.Connection,
-    event_id: int,
-    status: str,
-    payload: dict[str, Any] | None,
-    error: str | None = None,
-) -> None:
-    """Persist an event outcome with bounded diagnostics."""
-    with connection:
-        cursor = connection.execute(
-            """
-            UPDATE events_queue
-               SET payload=COALESCE(?, payload), status=?, error_log=?,
-                   updated_at=CURRENT_TIMESTAMP
-             WHERE id=?
-            """,
-            (
-                json.dumps(payload, ensure_ascii=False) if payload is not None else None,
-                status,
-                error[:8000] if error else None,
-                event_id,
-            ),
-        )
-        if cursor.rowcount != 1:
-            raise LookupError(f"event {event_id} does not exist")
 
 
 def validated_auth(path: Path) -> Path | None:
@@ -540,6 +516,7 @@ def main() -> int:
     args = parse_args()
     database = args.db.expanduser().resolve()
     event_payload: dict[str, Any] = {}
+    ledger_started = False
     try:
         with connect(database) as connection:
             if args.register:
@@ -561,18 +538,35 @@ def main() -> int:
                     event_payload["image_path"] = str(args.image_path)
                 if args.video_path is not None:
                     event_payload["video_path"] = str(args.video_path)
-                result = execute(args, event_payload)
+                mode = "analytics" if args.analytics else "fetch_bio" if args.fetch_bio else "publish"
+                if args.event_id is not None and mode == "publish" and validated_auth(args.auth) is not None and not args.dry_run:
+                    target = args.newsletter_id or args.company_id or "personal-profile"
+                    ledger = begin_submission(
+                        connection, event_id=args.event_id, channel="LINKEDIN",
+                        payload=event_payload, target=str(target),
+                    )
+                    if ledger["status"] == "CONFIRMED":
+                        emit_result("COMPLETED", result={"idempotent_replay": True, "platform_url": ledger["platform_url"]})
+                        return 0
+                    ledger_started = True
+                try:
+                    result = execute(args, event_payload)
+                except Exception as exc:
+                    if ledger_started and args.event_id is not None:
+                        update_publication(connection, args.event_id, "LINKEDIN", "UNKNOWN", detail=f"{type(exc).__name__}: {exc}")
+                    raise
+                if ledger_started and args.event_id is not None:
+                    update_publication(
+                        connection, args.event_id, "LINKEDIN", "CONFIRMED",
+                        platform_id=result.get("platform_id"), platform_url=result.get("platform_url"),
+                    )
                 LOGGER.info("Operation result: %s", json.dumps(result, ensure_ascii=False))
                 if args.event_id is not None:
-                    event_payload["linkedin_pro"] = result
-                    update_event(connection, args.event_id, "COMPLETED", event_payload)
+                    outcome = "BLOCKED_AUTH" if result.get("status") == "AUTH_REQUIRED" else "SIMULATED" if result.get("dry_run") else "COMPLETED"
+                    emit_result(outcome, result=result, payload_patch={"linkedin_pro": result})
     except Exception as exc:
         if args.event_id is not None:
-            try:
-                with connect(database) as connection:
-                    update_event(connection, args.event_id, "FAILED", None, f"{type(exc).__name__}: {exc}")
-            except Exception:
-                LOGGER.exception("Could not persist event failure")
+            emit_result("UNKNOWN" if ledger_started else "FAILED", error=f"{type(exc).__name__}: {exc}", retryable=False)
         LOGGER.exception("LinkedIn Pro operation failed")
         return 1
     return 0

@@ -15,6 +15,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Final
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from core.event_protocol import begin_submission, emit_result, update_publication
+
 
 PLUGIN_NAME: Final = "LinkedIn Publisher (Productie)"
 PLUGIN_TYPE: Final = "channel"
@@ -337,49 +340,13 @@ def publish(
             browser.close()
 
 
-def update_event(
-    connection: sqlite3.Connection,
-    event_id: int,
-    status: str,
-    error_log: str | None,
-    payload: dict[str, Any] | None = None,
-) -> None:
-    """Persist publication outcome and optional enriched payload."""
-    encoded_payload = (
-        json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-        if payload is not None
-        else None
-    )
-    with connection:
-        if encoded_payload is None:
-            cursor = connection.execute(
-                """
-                UPDATE events_queue
-                   SET status=?, error_log=?, updated_at=CURRENT_TIMESTAMP
-                 WHERE id=?
-                """,
-                (status, error_log, event_id),
-            )
-        else:
-            cursor = connection.execute(
-                """
-                UPDATE events_queue
-                   SET payload=?, status=?, error_log=?, updated_at=CURRENT_TIMESTAMP
-                 WHERE id=?
-                """,
-                (encoded_payload, status, error_log, event_id),
-            )
-        if cursor.rowcount != 1:
-            raise LookupError(f"event {event_id} does not exist")
-
-
 def process_event(
     connection: sqlite3.Connection,
     event_id: int,
     dry_run: bool,
     mock_auth_fallback: bool = False,
-) -> None:
-    """Publish one event and persist its terminal state."""
+) -> dict[str, Any]:
+    """Publish one event and return result metadata to the worker."""
     payload = load_payload(connection, event_id)
     content = extract_content(payload)
     effective_dry_run = dry_run or payload.get("dry_run") is True
@@ -393,7 +360,11 @@ def process_event(
     payload["linkedin_published"] = not effective_dry_run
     if artifact is not None:
         payload["linkedin_screenshot"] = str(artifact)
-    update_event(connection, event_id, "COMPLETED", None, payload)
+    return {
+        "dry_run": effective_dry_run,
+        "published": not effective_dry_run,
+        "screenshot": str(artifact) if artifact else None,
+    }
 
 
 def main() -> int:
@@ -404,27 +375,43 @@ def main() -> int:
     )
     args = parse_args()
     database = args.db.expanduser().resolve()
+    ledger_started = False
 
     try:
         with connect(database) as connection:
             if args.register:
                 register_plugin(connection)
             if args.event_id is not None:
+                payload = load_payload(connection, args.event_id)
+                effective_dry_run = args.dry_run or payload.get("dry_run") is True
                 try:
-                    process_event(
+                    if not effective_dry_run:
+                        try:
+                            resolve_auth_file()
+                        except FileNotFoundError as exc:
+                            emit_result("BLOCKED_AUTH", result={"status": "AUTH_REQUIRED", "published": False}, error=str(exc))
+                            return 0
+                        ledger = begin_submission(
+                            connection, event_id=args.event_id, channel="LINKEDIN",
+                            payload=payload, target="personal-profile",
+                        )
+                        if ledger["status"] == "CONFIRMED":
+                            emit_result("COMPLETED", result={"idempotent_replay": True, "platform_url": ledger["platform_url"]})
+                            return 0
+                        ledger_started = True
+                    result = process_event(
                         connection,
                         args.event_id,
                         args.dry_run,
                         args.mock_auth_fallback,
                     )
+                    if ledger_started:
+                        update_publication(connection, args.event_id, "LINKEDIN", "CONFIRMED")
+                    emit_result("SIMULATED" if effective_dry_run else "COMPLETED", result=result, payload_patch={"linkedin": result})
                 except Exception as exc:
-                    message = f"{type(exc).__name__}: {exc}"[:8000]
-                    try:
-                        update_event(connection, args.event_id, "FAILED", message)
-                    except (LookupError, sqlite3.Error):
-                        LOGGER.exception(
-                            "Could not persist failure for event %s", args.event_id
-                        )
+                    if ledger_started:
+                        update_publication(connection, args.event_id, "LINKEDIN", "UNKNOWN", detail=f"{type(exc).__name__}: {exc}")
+                    emit_result("UNKNOWN" if ledger_started else "FAILED", error=f"{type(exc).__name__}: {exc}", retryable=False)
                     raise
                 LOGGER.info(
                     "Event %s completed (dry_run=%s)", args.event_id, args.dry_run

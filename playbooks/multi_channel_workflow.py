@@ -130,12 +130,12 @@ def wait_for_one(database: Path, event_id: int, event_type: str) -> dict[str, An
         if row["status"] != last_status:
             LOGGER.info("MONITOR id=%s type=%s status=%s", event_id, event_type, row["status"])
             last_status = row["status"]
-        if row["status"] == "COMPLETED":
+        if row["status"] in {"COMPLETED", "SIMULATED"}:
             result = json.loads(row["payload"])
             if not isinstance(result, dict):
                 raise WorkflowError(f"event {event_id} returned invalid payload")
             return result
-        if row["status"] == "FAILED":
+        if row["status"] in {"FAILED", "BLOCKED_AUTH"}:
             raise WorkflowError(f"event {event_id} ({event_type}) failed: {row['error_log']}")
         time.sleep(interval)
     raise WorkflowError(f"event {event_id} ({event_type}) timed out")
@@ -237,10 +237,10 @@ def monitor_all(database: Path, runs: list[ChannelRun]) -> None:
             if status != run.status:
                 run.status = status
                 LOGGER.info("MONITOR id=%s channel=%s status=%s", event_id, run.channel, status)
-            if status == "COMPLETED":
+            if status in {"COMPLETED", "SIMULATED"}:
                 pending.pop(event_id)
                 LOGGER.info("CHANNEL COMPLETE ✓ %s event=%s", run.channel, event_id)
-            elif status == "FAILED":
+            elif status in {"FAILED", "BLOCKED_AUTH"}:
                 run.error = row["error_log"] or "unknown failure"
                 raise WorkflowError(
                     f"{run.channel} event {event_id} failed: {run.error}"

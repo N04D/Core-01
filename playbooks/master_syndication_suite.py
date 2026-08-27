@@ -227,12 +227,12 @@ def drive_event(database: Path, run: EventRun, mock: bool) -> dict[str, Any]:
             run.status,
             row["retry_count"],
         )
-        if run.status == "COMPLETED":
+        if run.status in {"COMPLETED", "SIMULATED"}:
             result = json.loads(row["payload"])
             if not isinstance(result, dict):
                 raise SuiteError(f"event {run.event_id} returned invalid payload")
             return result
-        if run.status == "FAILED":
+        if run.status in {"FAILED", "BLOCKED_AUTH"}:
             run.error = row["error_log"] or "unknown failure"
             raise SuiteError(f"event {run.event_id} failed: {run.error}")
         worker_once(database, mock)
@@ -377,9 +377,9 @@ def drive_publications(database: Path, runs: list[EventRun], mock: bool) -> None
             if status != run.status:
                 run.status = status
                 LOGGER.info("MONITOR id=%s channel=%s status=%s", event_id, run.event_type, status)
-            if status == "COMPLETED":
+            if status in {"COMPLETED", "SIMULATED"}:
                 remaining.pop(event_id)
-            elif status == "FAILED":
+            elif status in {"FAILED", "BLOCKED_AUTH"}:
                 run.error = row["error_log"] or "unknown failure"
                 raise SuiteError(f"{run.event_type} failed: {run.error}")
         if not remaining:

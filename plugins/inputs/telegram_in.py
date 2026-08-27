@@ -90,7 +90,11 @@ def read_offset() -> int:
 def allowed_chat(chat_id: int) -> bool:
     configured = os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", "").strip()
     if not configured:
-        return True
+        LOGGER.error(
+            "TELEGRAM_ALLOWED_CHAT_IDS is empty; fail-closed policy rejects chat_id=%s",
+            chat_id,
+        )
+        return False
     allowed = {item.strip() for item in configured.split(",") if item.strip()}
     return str(chat_id) in allowed
 
@@ -223,9 +227,34 @@ def active_channels(connection: sqlite3.Connection) -> list[str]:
     return [str(row[0]) for row in rows]
 
 
-def persist(connection: sqlite3.Connection, item: dict[str, Any], auto_dispatch: bool) -> tuple[Path, int, list[int]]:
+def persist(
+    connection: sqlite3.Connection,
+    item: dict[str, Any],
+    auto_dispatch: bool,
+    update_id: int,
+) -> tuple[Path, int, list[int]] | None:
+    """Persist one Telegram update exactly once by update and message identity."""
+    try:
+        with connection:
+            connection.execute(
+                """INSERT INTO telegram_updates(update_id,chat_id,message_id)
+                   VALUES (?,?,?)""",
+                (update_id, item["chat_id"], item["message_id"]),
+            )
+    except sqlite3.IntegrityError:
+        LOGGER.info(
+            "Ignored duplicate Telegram update_id=%s chat_id=%s message_id=%s",
+            update_id, item["chat_id"], item["message_id"],
+        )
+        return None
+
     channels = active_channels(connection) if auto_dispatch else []
-    concept = create_concept(item, channels)
+    try:
+        concept = create_concept(item, channels)
+    except Exception:
+        with connection:
+            connection.execute("DELETE FROM telegram_updates WHERE update_id=?", (update_id,))
+        raise
     payload = {
         "source": "telegram",
         "topic": item["topic"],
@@ -252,6 +281,11 @@ def persist(connection: sqlite3.Connection, item: dict[str, Any], auto_dispatch:
                 (channel, json.dumps(channel_payload, ensure_ascii=False)),
             )
             event_ids.append(int(cursor.lastrowid))
+        connection.execute(
+            """UPDATE telegram_updates
+                  SET concept_path=?, inbound_event_id=? WHERE update_id=?""",
+            (str(concept), int(audit.lastrowid), update_id),
+        )
     return concept, int(audit.lastrowid), event_ids
 
 
@@ -264,9 +298,14 @@ def process_updates(connection: sqlite3.Connection, updates: list[dict[str, Any]
     for update in updates:
         item = extract_message(update, token, mock_media)
         if item:
-            concept, audit_id, publication_ids = persist(connection, item, auto_dispatch)
-            LOGGER.info("Inbound stored concept=%s audit_event=%s publication_events=%s", concept, audit_id, publication_ids)
-            processed += 1
+            update_id = update.get("update_id")
+            if not isinstance(update_id, int):
+                raise ValueError("Telegram update_id must be an integer")
+            stored = persist(connection, item, auto_dispatch, update_id)
+            if stored is not None:
+                concept, audit_id, publication_ids = stored
+                LOGGER.info("Inbound stored concept=%s audit_event=%s publication_events=%s", concept, audit_id, publication_ids)
+                processed += 1
         if isinstance(update.get("update_id"), int) and token:
             atomic_json(OFFSET_FILE, {"offset": update["update_id"] + 1, "updated_at": datetime.now(timezone.utc).isoformat()})
     return processed

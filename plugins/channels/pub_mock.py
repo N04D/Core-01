@@ -13,6 +13,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Final
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from core.event_protocol import emit_result
+
 
 PLUGIN_NAME: Final = "Mock Publisher (Test Zandbak)"
 PLUGIN_TYPE: Final = "channel"
@@ -145,43 +148,15 @@ def append_publication(event_id: int, event_type: str, source: str, content: str
             fcntl.flock(log_file.fileno(), fcntl.LOCK_UN)
 
 
-def update_event(
-    connection: sqlite3.Connection,
-    event_id: int,
-    status: str,
-    error_log: str | None = None,
-) -> None:
-    """Persist the final processing state for an event."""
-    with connection:
-        cursor = connection.execute(
-            """
-            UPDATE events_queue
-               SET status = ?, error_log = ?, updated_at = CURRENT_TIMESTAMP
-             WHERE id = ?
-            """,
-            (status, error_log, event_id),
-        )
-        if cursor.rowcount != 1:
-            raise LookupError(f"event {event_id} does not exist")
-
-
-def process_event(connection: sqlite3.Connection, event_id: int) -> None:
-    """Publish one event and persist its resulting state."""
-    try:
-        event = load_event(connection, event_id)
-        payload = parse_payload(event["payload"])
-        content, source = extract_content(payload)
-        append_publication(event["id"], event["event_type"], source, content)
-        update_event(connection, event_id, "COMPLETED")
-    except Exception as exc:
-        error_message = f"{type(exc).__name__}: {exc}"[:8000]
-        try:
-            update_event(connection, event_id, "FAILED", error_message)
-        except (LookupError, sqlite3.Error):
-            LOGGER.exception("Could not persist failure for event %s", event_id)
-        raise
+def process_event(connection: sqlite3.Connection, event_id: int) -> dict[str, Any]:
+    """Publish one event and return its artifact metadata to the worker."""
+    event = load_event(connection, event_id)
+    payload = parse_payload(event["payload"])
+    content, source = extract_content(payload)
+    append_publication(event["id"], event["event_type"], source, content)
 
     LOGGER.info("Event %s recorded in %s", event_id, DEFAULT_LOG_FILE)
+    return {"log_file": str(DEFAULT_LOG_FILE), "source": source}
 
 
 def main() -> int:
@@ -198,8 +173,11 @@ def main() -> int:
             if args.register:
                 register_plugin(connection)
             if args.event_id is not None:
-                process_event(connection, args.event_id)
+                result = process_event(connection, args.event_id)
+                emit_result("SIMULATED", result=result, payload_patch={"mock_publisher": result})
     except (OSError, sqlite3.Error, ValueError, LookupError, json.JSONDecodeError):
+        if args.event_id is not None:
+            emit_result("FAILED", error="Mock publisher failed", retryable=True)
         LOGGER.exception("Mock publisher failed")
         return 1
     return 0

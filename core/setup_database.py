@@ -20,11 +20,24 @@ SCHEMA: Final[dict[str, str]] = {
             event_type TEXT NOT NULL,
             payload JSON NOT NULL CHECK (json_valid(payload)),
             status TEXT NOT NULL DEFAULT 'PENDING'
-                CHECK (status IN ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED')),
+                CHECK (status IN (
+                    'PENDING', 'PROCESSING', 'COMPLETED', 'FAILED',
+                    'BLOCKED_AUTH', 'SIMULATED'
+                )),
             retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
             error_log TEXT,
+            claimed_by TEXT,
+            lease_until TEXT,
+            claim_token TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CHECK (
+                (status = 'PROCESSING' AND claimed_by IS NOT NULL
+                    AND lease_until IS NOT NULL AND claim_token IS NOT NULL)
+                OR
+                (status != 'PROCESSING' AND claimed_by IS NULL
+                    AND lease_until IS NULL AND claim_token IS NULL)
+            )
         )
     """,
     "dead_letter_queue": """
@@ -148,6 +161,37 @@ SCHEMA: Final[dict[str, str]] = {
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
     """,
+    "publication_attempts": """
+        CREATE TABLE IF NOT EXISTS publication_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id INTEGER NOT NULL,
+            channel TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            target TEXT NOT NULL,
+            attempt_number INTEGER NOT NULL DEFAULT 1 CHECK (attempt_number > 0),
+            status TEXT NOT NULL CHECK (
+                status IN ('PREPARED', 'SUBMITTED', 'CONFIRMED', 'UNKNOWN', 'FAILED')
+            ),
+            platform_id TEXT,
+            platform_url TEXT,
+            detail TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(event_id, channel)
+        )
+    """,
+    "telegram_updates": """
+        CREATE TABLE IF NOT EXISTS telegram_updates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            update_id INTEGER NOT NULL UNIQUE,
+            chat_id INTEGER NOT NULL,
+            message_id INTEGER NOT NULL,
+            concept_path TEXT,
+            inbound_event_id INTEGER,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(chat_id, message_id)
+        )
+    """,
     "content_variants": """
         CREATE TABLE IF NOT EXISTS content_variants (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -189,6 +233,58 @@ SCHEMA: Final[dict[str, str]] = {
     """,
 }
 
+INDEXES: Final[tuple[str, ...]] = (
+    "CREATE INDEX IF NOT EXISTS idx_events_queue_claim "
+    "ON events_queue(status, created_at, id)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_events_queue_claim_token "
+    "ON events_queue(claim_token) WHERE claim_token IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS idx_events_queue_lease "
+    "ON events_queue(status, lease_until) WHERE status='PROCESSING'",
+    "CREATE INDEX IF NOT EXISTS idx_scheduled_events_due "
+    "ON scheduled_events(status, scheduled_time, id)",
+    "CREATE INDEX IF NOT EXISTS idx_publication_attempts_status "
+    "ON publication_attempts(status, updated_at)",
+)
+
+
+def migrate_events_queue(connection: sqlite3.Connection) -> None:
+    """Upgrade the queue CHECK constraint and lease columns without data loss."""
+    row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='events_queue'"
+    ).fetchone()
+    if row is None:
+        return
+    sql = str(row[0] or "")
+    columns = {
+        str(item[1]) for item in connection.execute("PRAGMA table_info(events_queue)")
+    }
+    if {"claimed_by", "lease_until", "claim_token"}.issubset(columns) and all(
+        status in sql for status in ("BLOCKED_AUTH", "SIMULATED")
+    ):
+        return
+
+    LOGGER.info("Migrating 'events_queue' to lease-aware event semantics.")
+    connection.execute("ALTER TABLE events_queue RENAME TO events_queue_legacy")
+    connection.execute(SCHEMA["events_queue"])
+    connection.execute(
+        """
+        INSERT INTO events_queue (
+            id, event_type, payload, status, retry_count, error_log,
+            created_at, updated_at
+        )
+        SELECT id, event_type, payload,
+               CASE WHEN status='PROCESSING' THEN 'PENDING' ELSE status END,
+               retry_count,
+               CASE WHEN status='PROCESSING'
+                    THEN COALESCE(error_log || '; ', '') ||
+                         'Recovered during lease migration'
+                    ELSE error_log END,
+               created_at, updated_at
+          FROM events_queue_legacy
+        """
+    )
+    connection.execute("DROP TABLE events_queue_legacy")
+
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
@@ -215,9 +311,14 @@ def initialize_database(database_path: Path) -> None:
         connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA busy_timeout = 30000")
 
+        migrate_events_queue(connection)
         for table_name, statement in SCHEMA.items():
             connection.execute(statement)
             LOGGER.info("Table '%s' checked or created successfully.", table_name)
+
+        for statement in INDEXES:
+            connection.execute(statement)
+        LOGGER.info("Database indexes checked or created successfully.")
 
         connection.commit()
 

@@ -17,6 +17,9 @@ from typing import Any, Final
 from urllib.parse import urlparse
 from uuid import uuid4
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from core.event_protocol import begin_submission, emit_result, update_publication
+
 
 PLUGIN_NAME: Final = "Substack Publisher"
 PLUGIN_TYPE: Final = "channel"
@@ -95,29 +98,6 @@ def load_payload(connection: sqlite3.Connection, event_id: int) -> dict[str, Any
     if not isinstance(payload, dict):
         raise ValueError("event payload must be a JSON object")
     return payload
-
-
-def update_event(
-    connection: sqlite3.Connection,
-    event_id: int,
-    status: str,
-    payload: dict[str, Any] | None,
-    error: str | None = None,
-) -> None:
-    """Persist an event's terminal state."""
-    encoded = json.dumps(payload, ensure_ascii=False) if payload is not None else None
-    with connection:
-        cursor = connection.execute(
-            """
-            UPDATE events_queue
-               SET payload=COALESCE(?, payload), status=?, error_log=?,
-                   updated_at=CURRENT_TIMESTAMP
-             WHERE id=?
-            """,
-            (encoded, status, error[:8000] if error else None, event_id),
-        )
-        if cursor.rowcount != 1:
-            raise LookupError(f"event {event_id} does not exist")
 
 
 def read_content(payload: dict[str, Any]) -> tuple[str, str]:
@@ -331,8 +311,6 @@ def process_event(
         }
     else:
         result = publish(payload, event_id, dry_run, auth)
-    payload["substack"] = result
-    update_event(connection, event_id, "COMPLETED", payload)
     return result
 
 
@@ -344,21 +322,37 @@ def main() -> int:
     )
     args = parse_args()
     database = args.db.expanduser().resolve()
+    ledger_started = False
     try:
         with connect(database) as connection:
             if args.register:
                 register_plugin(connection)
             if args.event_id is not None:
+                payload = load_payload(connection, args.event_id)
+                effective_dry_run = args.dry_run or payload.get("dry_run") is True
                 try:
+                    auth = resolve_auth()
+                    if auth is None and not effective_dry_run:
+                        emit_result("BLOCKED_AUTH", result={"status": "AUTH_REQUIRED", "published": False})
+                        return 0
+                    if auth is not None and not effective_dry_run:
+                        ledger = begin_submission(
+                            connection, event_id=args.event_id, channel="SUBSTACK",
+                            payload=payload, target=str(payload.get("publication_url") or "substack-publication"),
+                        )
+                        if ledger["status"] == "CONFIRMED":
+                            emit_result("COMPLETED", result={"idempotent_replay": True, "platform_url": ledger["platform_url"]})
+                            return 0
+                        ledger_started = True
                     result = process_event(connection, args.event_id, args.dry_run)
+                    if ledger_started:
+                        update_publication(connection, args.event_id, "SUBSTACK", "CONFIRMED")
+                    outcome = "BLOCKED_AUTH" if result.get("status") == "AUTH_REQUIRED" else "SIMULATED" if result.get("dry_run") else "COMPLETED"
+                    emit_result(outcome, result=result, payload_patch={"substack": result})
                 except Exception as exc:
-                    update_event(
-                        connection,
-                        args.event_id,
-                        "FAILED",
-                        None,
-                        f"{type(exc).__name__}: {exc}",
-                    )
+                    if ledger_started:
+                        update_publication(connection, args.event_id, "SUBSTACK", "UNKNOWN", detail=f"{type(exc).__name__}: {exc}")
+                    emit_result("UNKNOWN" if ledger_started else "FAILED", error=f"{type(exc).__name__}: {exc}", retryable=False)
                     raise
                 LOGGER.info("Event %s completed: %s", args.event_id, json.dumps(result))
     except Exception:

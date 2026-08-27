@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -16,6 +17,7 @@ DATABASE: Final = PROJECT_ROOT / "db" / "events.db"
 SKILL_FILE: Final = PROJECT_ROOT / "vault" / "skills" / "test_skill.md"
 PLUGIN: Final = PROJECT_ROOT / "plugins" / "ai" / "gen_local_llm.py"
 SETUP_DATABASE: Final = PROJECT_ROOT / "core" / "setup_database.py"
+WORKER: Final = PROJECT_ROOT / "daemon" / "worker.py"
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -51,29 +53,21 @@ def main() -> int:
     with sqlite3.connect(DATABASE) as connection:
         cursor = connection.execute(
             "INSERT INTO events_queue (event_type, payload) VALUES (?, ?)",
-            ("generate.local_llm", json.dumps(payload, ensure_ascii=False)),
+            ("AI_GENERATION", json.dumps(payload, ensure_ascii=False)),
         )
         event_id = int(cursor.lastrowid)
         connection.commit()
     print(f"[OK] Test-event geïnjecteerd: id={event_id}")
 
-    run(
-        [
-            str(PLUGIN),
-            "--event_id",
-            str(event_id),
-            "--db",
-            str(DATABASE),
-            "--mock",
-        ]
-    )
+    os.environ["LOCAL_LLM_MOCK"] = "1"
+    run([str(WORKER), "--database", str(DATABASE), "--once"])
 
     with sqlite3.connect(DATABASE) as connection:
         row = connection.execute(
             "SELECT status, payload, error_log FROM events_queue WHERE id=?",
             (event_id,),
         ).fetchone()
-    if row is None or row[0] != "COMPLETED":
+    if row is None or row[0] != "SIMULATED":
         detail = "event ontbreekt" if row is None else f"status={row[0]} error={row[2]}"
         raise RuntimeError(f"pipeline self-test mislukt: {detail}")
 

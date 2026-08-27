@@ -15,7 +15,8 @@ from typing import Any, Final
 
 
 LOGGER: Final = logging.getLogger("playbook")
-TERMINAL_STATUSES: Final = {"COMPLETED", "FAILED"}
+TERMINAL_STATUSES: Final = {"COMPLETED", "SIMULATED", "BLOCKED_AUTH", "FAILED"}
+SUCCESS_STATUSES: Final = {"COMPLETED", "SIMULATED"}
 PROJECT_ROOT: Final = Path(__file__).resolve().parent.parent
 
 
@@ -86,14 +87,14 @@ def dispatch_and_wait(
             LOGGER.info("Event id=%s status=%s", event_id, status)
             last_status = status
         if status in TERMINAL_STATUSES:
-            if status == "FAILED":
+            if status not in SUCCESS_STATUSES:
                 raise PlaybookError(
                     f"event {event_id} failed: {error_log or 'unknown failure'}"
                 )
             decoded = json.loads(result_payload)
             if not isinstance(decoded, dict):
                 raise PlaybookError(f"event {event_id} returned a non-object payload")
-            LOGGER.info("BATON ✓ event id=%s completed", event_id)
+            LOGGER.info("BATON ✓ event id=%s terminal status=%s", event_id, status)
             return decoded
         time.sleep(poll_interval)
 

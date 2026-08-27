@@ -15,6 +15,9 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Final
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from core.event_protocol import emit_result
 from uuid import uuid4
 
 
@@ -176,40 +179,7 @@ def save_output(event_id: int, output: str) -> Path:
     return destination
 
 
-def complete_event(
-    connection: sqlite3.Connection,
-    event_id: int,
-    payload: dict[str, Any],
-    output_path: Path,
-) -> None:
-    payload["filepath"] = str(output_path)
-    with connection:
-        cursor = connection.execute(
-            """
-            UPDATE events_queue
-               SET payload=?, status='COMPLETED', error_log=NULL,
-                   updated_at=CURRENT_TIMESTAMP
-             WHERE id=?
-            """,
-            (json.dumps(payload, ensure_ascii=False), event_id),
-        )
-        if cursor.rowcount != 1:
-            raise LookupError(f"event {event_id} disappeared")
-
-
-def fail_event(connection: sqlite3.Connection, event_id: int, message: str) -> None:
-    with connection:
-        connection.execute(
-            """
-            UPDATE events_queue
-               SET status='FAILED', error_log=?, updated_at=CURRENT_TIMESTAMP
-             WHERE id=?
-            """,
-            (message[:8000], event_id),
-        )
-
-
-def process_event(connection: sqlite3.Connection, event_id: int, mock: bool) -> Path:
+def process_event(connection: sqlite3.Connection, event_id: int, mock: bool) -> tuple[Path, dict[str, Any]]:
     payload = load_payload(connection, event_id)
     prompt = render_template(resolve_skill(payload), payload)
     database = Path(connection.execute("PRAGMA database_list").fetchone()[2]).resolve()
@@ -244,8 +214,13 @@ def process_event(connection: sqlite3.Connection, event_id: int, mock: bool) -> 
     ]
     payload["editorial_roles"] = list(editorial.roles)
     payload["editorial_status"] = "APPROVED"
-    complete_event(connection, event_id, payload, output_path)
-    return output_path
+    patch = {
+        "filepath": str(output_path),
+        "rag_sources": payload["rag_sources"],
+        "editorial_roles": payload["editorial_roles"],
+        "editorial_status": "APPROVED",
+    }
+    return output_path, patch
 
 
 def main() -> int:
@@ -260,15 +235,14 @@ def main() -> int:
                 register_plugin(connection)
                 LOGGER.info("Plugin registered: %s", PLUGIN_NAME)
             if args.event_id is not None:
-                try:
-                    output_path = process_event(connection, args.event_id, args.mock)
-                except Exception as exc:
-                    fail_event(connection, args.event_id, f"{type(exc).__name__}: {exc}")
-                    raise
+                output_path, patch = process_event(connection, args.event_id, args.mock)
+                emit_result("SIMULATED" if args.mock else "COMPLETED", result={"filepath": str(output_path)}, payload_patch=patch)
                 LOGGER.info("Event %s completed: %s", args.event_id, output_path)
     except (OSError, sqlite3.Error, ValueError, LookupError, json.JSONDecodeError,
             MarkdownTemplateError, EditorialLoopError,
             subprocess.SubprocessError, TimeoutError):
+        if args.event_id is not None:
+            emit_result("FAILED", error="Local LLM plugin failed", retryable=True)
         LOGGER.exception("Local LLM plugin failed")
         return 1
     return 0

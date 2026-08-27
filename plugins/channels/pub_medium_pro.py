@@ -16,6 +16,9 @@ from pathlib import Path
 from typing import Any, Final
 from uuid import uuid4
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from core.event_protocol import begin_submission, emit_result, update_publication
+
 
 PLUGIN_NAME: Final = "Medium Publisher"
 PLUGIN_TYPE: Final = "channel"
@@ -108,28 +111,6 @@ def load_payload(connection: sqlite3.Connection, event_id: int) -> dict[str, Any
     if not isinstance(payload, dict):
         raise ValueError("event payload must be a JSON object")
     return payload
-
-
-def update_event(
-    connection: sqlite3.Connection,
-    event_id: int,
-    status: str,
-    payload: dict[str, Any] | None,
-    error: str | None = None,
-) -> None:
-    """Persist a terminal event state with bounded diagnostics."""
-    encoded = json.dumps(payload, ensure_ascii=False) if payload is not None else None
-    with connection:
-        cursor = connection.execute(
-            """
-            UPDATE events_queue
-               SET payload=COALESCE(?,payload),status=?,error_log=?,
-                   updated_at=CURRENT_TIMESTAMP WHERE id=?
-            """,
-            (encoded, status, error[:8000] if error else None, event_id),
-        )
-        if cursor.rowcount != 1:
-            raise LookupError(f"event {event_id} does not exist")
 
 
 def apply_cli_overrides(args: argparse.Namespace, payload: dict[str, Any]) -> None:
@@ -389,9 +370,6 @@ def process_event(
         result = publish(payload, event_id, dry_run, auth, headless)
         result["mock"] = False
         result["medium_contacted"] = True
-    payload["medium"] = result
-    if event_id:
-        update_event(connection, event_id, "COMPLETED", payload)
     return result
 
 
@@ -404,6 +382,7 @@ def main() -> int:
     args = parse_args()
     database = args.db.expanduser().resolve()
     payload: dict[str, Any] = {}
+    ledger_started = False
     try:
         with connect(database) as connection:
             if args.register:
@@ -418,28 +397,37 @@ def main() -> int:
                     if args.headless is not None
                     else boolean_env("MEDIUM_HEADLESS", True)
                 )
-                result = process_event(
-                    connection,
-                    args.event_id or 0,
-                    payload,
-                    args.dry_run,
-                    args.auth,
-                    headless,
-                )
+                auth_available = validated_auth(args.auth) is not None
+                if args.event_id is not None and auth_available and not args.dry_run:
+                    ledger = begin_submission(
+                        connection, event_id=args.event_id, channel="MEDIUM",
+                        payload=payload, target="medium-story",
+                    )
+                    if ledger["status"] == "CONFIRMED":
+                        emit_result("COMPLETED", result={"idempotent_replay": True, "platform_url": ledger["platform_url"]})
+                        return 0
+                    ledger_started = True
+                try:
+                    result = process_event(
+                        connection, args.event_id or 0, payload, args.dry_run,
+                        args.auth, headless,
+                    )
+                except Exception as exc:
+                    if ledger_started and args.event_id is not None:
+                        update_publication(connection, args.event_id, "MEDIUM", "UNKNOWN", detail=f"{type(exc).__name__}: {exc}")
+                    raise
+                if ledger_started and args.event_id is not None:
+                    update_publication(
+                        connection, args.event_id, "MEDIUM", "CONFIRMED",
+                        platform_id=result.get("platform_id"), platform_url=result.get("platform_url"),
+                    )
                 LOGGER.info("Operation result: %s", json.dumps(result, ensure_ascii=False))
+                if args.event_id is not None:
+                    outcome = "BLOCKED_AUTH" if result.get("status") == "AUTH_REQUIRED" else "SIMULATED" if result.get("dry_run") else "COMPLETED"
+                    emit_result(outcome, result=result, payload_patch={"medium": result})
     except Exception as exc:
         if args.event_id is not None:
-            try:
-                with connect(database) as connection:
-                    update_event(
-                        connection,
-                        args.event_id,
-                        "FAILED",
-                        None,
-                        f"{type(exc).__name__}: {exc}",
-                    )
-            except Exception:
-                LOGGER.exception("Could not persist event failure")
+            emit_result("UNKNOWN" if ledger_started else "FAILED", error=f"{type(exc).__name__}: {exc}", retryable=False)
         LOGGER.exception("Medium publisher failed")
         return 1
     return 0

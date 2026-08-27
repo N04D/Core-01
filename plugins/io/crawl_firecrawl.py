@@ -17,6 +17,9 @@ from typing import Any, Final
 from urllib.parse import urlparse
 from uuid import uuid4
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from core.event_protocol import emit_result
+
 import requests
 from dotenv import load_dotenv
 
@@ -189,52 +192,13 @@ def save_markdown(source_url: str, markdown: str) -> Path:
     return output_path
 
 
-def mark_completed(
-    connection: sqlite3.Connection,
-    event_id: int,
-    payload: dict[str, Any],
-    output_path: Path,
-) -> None:
-    """Store the output path in the payload and complete the event."""
-    payload["filepath"] = str(output_path)
-    encoded_payload = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-    with connection:
-        cursor = connection.execute(
-            """
-            UPDATE events_queue
-               SET payload = ?, status = 'COMPLETED', error_log = NULL,
-                   updated_at = CURRENT_TIMESTAMP
-             WHERE id = ?
-            """,
-            (encoded_payload, event_id),
-        )
-        if cursor.rowcount != 1:
-            raise LookupError(f"event {event_id} disappeared during processing")
-
-
-def mark_failed(
-    connection: sqlite3.Connection, event_id: int, error_message: str
-) -> None:
-    """Persist a bounded failure message when the event still exists."""
-    with connection:
-        connection.execute(
-            """
-            UPDATE events_queue
-               SET status = 'FAILED', error_log = ?,
-                   updated_at = CURRENT_TIMESTAMP
-             WHERE id = ?
-            """,
-            (error_message[:8000], event_id),
-        )
-
-
-def process_event(connection: sqlite3.Connection, event_id: int) -> None:
-    """Scrape one event URL and commit the resulting vault path."""
+def process_event(connection: sqlite3.Connection, event_id: int) -> Path:
+    """Scrape one event URL and return the resulting vault path."""
     payload = load_event(connection, event_id)
     markdown = scrape_markdown(payload["url"])
     output_path = save_markdown(payload["url"], markdown)
-    mark_completed(connection, event_id, payload, output_path)
     LOGGER.info("Event %s completed; output=%s", event_id, output_path)
+    return output_path
 
 
 def main() -> int:
@@ -252,18 +216,11 @@ def main() -> int:
             if args.register:
                 register_plugin(connection)
             if args.event_id is not None:
-                try:
-                    process_event(connection, args.event_id)
-                except Exception as exc:
-                    error_message = f"{type(exc).__name__}: {exc}"
-                    try:
-                        mark_failed(connection, args.event_id, error_message)
-                    except sqlite3.Error:
-                        LOGGER.exception(
-                            "Could not persist failure for event %s", args.event_id
-                        )
-                    raise
-    except Exception:
+                output_path = process_event(connection, args.event_id)
+                emit_result("COMPLETED", result={"filepath": str(output_path)}, payload_patch={"filepath": str(output_path)})
+    except Exception as exc:
+        if args.event_id is not None:
+            emit_result("FAILED", error=f"{type(exc).__name__}: {exc}", retryable=True)
         LOGGER.exception("Firecrawl plugin failed")
         return 1
     return 0

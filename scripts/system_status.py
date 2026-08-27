@@ -145,6 +145,8 @@ def status_label(status: str, palette: Palette) -> str:
         "PENDING": palette.yellow,
         "PROCESSING": palette.cyan,
         "FAILED": palette.red,
+        "BLOCKED_AUTH": palette.red,
+        "SIMULATED": palette.magenta,
     }
     return f"{colors.get(status, '')}{status}{palette.reset}"
 
@@ -184,6 +186,8 @@ def print_dashboard(
         ("Processing", queue_counts.get("PROCESSING", 0)),
         ("Completed", queue_counts.get("COMPLETED", 0)),
         ("Failed (actief)", queue_counts.get("FAILED", 0)),
+        ("Auth geblokkeerd", queue_counts.get("BLOCKED_AUTH", 0)),
+        ("Gesimuleerd", queue_counts.get("SIMULATED", 0)),
         ("Dead letters", dead_count),
     ]
     print(f"{palette.bold}OVERZICHT{palette.reset}")
