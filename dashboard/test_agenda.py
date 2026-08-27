@@ -69,6 +69,19 @@ class AgendaApiTest(unittest.TestCase):
         for marker in ("calendar-day", "calendar-week", "quickScheduleDraft", "schedule-list"):
             self.assertIn(marker, page)
 
+    def test_dashboard_contains_reliable_accessible_feedback_primitives(self) -> None:
+        page = self.client.get("/").get_data(as_text=True)
+        for marker in (
+            'id="toast-stack"',
+            'id="live-region"',
+            'aria-live="polite"',
+            "async function runAction",
+            "Promise.allSettled",
+            "Opnieuw proberen",
+        ):
+            self.assertIn(marker, page)
+        self.assertNotIn('id="flash"', page)
+
 
 if __name__ == "__main__":
     unittest.main()
