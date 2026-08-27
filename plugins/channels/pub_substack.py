@@ -19,6 +19,7 @@ from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from core.event_protocol import begin_submission, emit_result, update_publication
+from core.database import connect_database
 
 
 PLUGIN_NAME: Final = "Substack Publisher"
@@ -62,10 +63,7 @@ def parse_args() -> argparse.Namespace:
 
 def connect(database: Path) -> sqlite3.Connection:
     """Open a configured SQLite connection."""
-    connection = sqlite3.connect(database, timeout=30.0)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA busy_timeout = 30000")
-    return connection
+    return connect_database(database)
 
 
 def register_plugin(connection: sqlite3.Connection) -> None:

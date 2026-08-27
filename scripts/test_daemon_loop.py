@@ -13,6 +13,8 @@ from uuid import uuid4
 
 
 PROJECT_ROOT: Final = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+from core.database import connect_database
 DATABASE: Final = PROJECT_ROOT / "db" / "events.db"
 SETUP_DATABASE: Final = PROJECT_ROOT / "core" / "setup_database.py"
 WORKER: Final = PROJECT_ROOT / "daemon" / "worker.py"
@@ -48,7 +50,7 @@ def main() -> int:
     payload = {
         "content": "Automatisch verwerkt door de continue worker daemon-test."
     }
-    with sqlite3.connect(DATABASE) as connection:
+    with connect_database(DATABASE) as connection:
         connection.execute(
             """
             INSERT INTO event_routes (event_type, target_plugin_name)
@@ -66,7 +68,7 @@ def main() -> int:
 
     run([str(WORKER), "--database", str(DATABASE), "--once"])
 
-    with sqlite3.connect(DATABASE) as connection:
+    with connect_database(DATABASE) as connection:
         row = connection.execute(
             "SELECT status, retry_count, error_log FROM events_queue WHERE id = ?",
             (event_id,),

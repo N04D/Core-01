@@ -10,6 +10,9 @@ import sys
 from pathlib import Path
 from typing import Final
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from core.database import connect_database
+
 
 LOGGER: Final = logging.getLogger("setup_database")
 
@@ -29,6 +32,7 @@ SCHEMA: Final[dict[str, str]] = {
             claimed_by TEXT,
             lease_until TEXT,
             claim_token TEXT,
+            next_attempt_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             CHECK (
@@ -234,8 +238,8 @@ SCHEMA: Final[dict[str, str]] = {
 }
 
 INDEXES: Final[tuple[str, ...]] = (
-    "CREATE INDEX IF NOT EXISTS idx_events_queue_claim "
-    "ON events_queue(status, created_at, id)",
+    "CREATE INDEX IF NOT EXISTS idx_events_queue_ready "
+    "ON events_queue(status, next_attempt_at, created_at, id)",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_events_queue_claim_token "
     "ON events_queue(claim_token) WHERE claim_token IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS idx_events_queue_lease "
@@ -258,7 +262,7 @@ def migrate_events_queue(connection: sqlite3.Connection) -> None:
     columns = {
         str(item[1]) for item in connection.execute("PRAGMA table_info(events_queue)")
     }
-    if {"claimed_by", "lease_until", "claim_token"}.issubset(columns) and all(
+    if {"claimed_by", "lease_until", "claim_token", "next_attempt_at"}.issubset(columns) and all(
         status in sql for status in ("BLOCKED_AUTH", "SIMULATED")
     ):
         return
@@ -270,7 +274,7 @@ def migrate_events_queue(connection: sqlite3.Connection) -> None:
         """
         INSERT INTO events_queue (
             id, event_type, payload, status, retry_count, error_log,
-            created_at, updated_at
+            next_attempt_at, created_at, updated_at
         )
         SELECT id, event_type, payload,
                CASE WHEN status='PROCESSING' THEN 'PENDING' ELSE status END,
@@ -279,7 +283,7 @@ def migrate_events_queue(connection: sqlite3.Connection) -> None:
                     THEN COALESCE(error_log || '; ', '') ||
                          'Recovered during lease migration'
                     ELSE error_log END,
-               created_at, updated_at
+               created_at, created_at, updated_at
           FROM events_queue_legacy
         """
     )
@@ -306,10 +310,7 @@ def initialize_database(database_path: Path) -> None:
     resolved_path = database_path.expanduser().resolve()
     resolved_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with sqlite3.connect(resolved_path, timeout=30.0) as connection:
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA journal_mode = WAL")
-        connection.execute("PRAGMA busy_timeout = 30000")
+    with connect_database(resolved_path) as connection:
 
         migrate_events_queue(connection)
         for table_name, statement in SCHEMA.items():

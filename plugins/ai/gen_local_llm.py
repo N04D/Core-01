@@ -12,12 +12,15 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Final
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from core.event_protocol import emit_result
+from core.database import connect_database
+from core.processes import popen_process_group, terminate_process_group
 from uuid import uuid4
 
 
@@ -54,10 +57,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def connect(path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(path, timeout=30.0)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA busy_timeout = 30000")
-    return connection
+    return connect_database(path)
 
 
 def register_plugin(connection: sqlite3.Connection) -> None:
@@ -100,8 +100,15 @@ def resolve_skill(payload: dict[str, Any]) -> Path:
 
 
 def generate(prompt: str, mock: bool, role: str = "SCHRIJVER") -> str:
-    timeout = float(os.getenv("LOCAL_LLM_TIMEOUT_SECONDS", "300"))
-    if timeout <= 0:
+    role_timeout = float(os.getenv("LOCAL_LLM_ROLE_TIMEOUT_SECONDS", "300"))
+    deadline = float(
+        os.getenv(
+            "EVENT_DEADLINE_EPOCH",
+            os.getenv("LLM_WORKFLOW_DEADLINE_EPOCH", str(time.time() + 900)),
+        )
+    )
+    timeout = min(role_timeout, deadline - time.time())
+    if role_timeout <= 0 or timeout <= 0:
         raise ValueError("LOCAL_LLM_TIMEOUT_SECONDS must be positive")
 
     mock_enabled = mock or os.getenv("LOCAL_LLM_MOCK", "").lower() in {
@@ -126,7 +133,7 @@ def generate(prompt: str, mock: bool, role: str = "SCHRIJVER") -> str:
         if not command:
             raise ValueError("LOCAL_LLM_COMMAND is empty")
 
-    process = subprocess.Popen(
+    process = popen_process_group(
         command,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
@@ -134,14 +141,17 @@ def generate(prompt: str, mock: bool, role: str = "SCHRIJVER") -> str:
         text=True,
         cwd=PROJECT_ROOT,
         env=os.environ.copy(),
-        start_new_session=True,
     )
     try:
         stdout, stderr = process.communicate(input=prompt, timeout=timeout)
     except subprocess.TimeoutExpired:
-        process.kill()
+        terminate_process_group(
+            process, float(os.getenv("PROCESS_TERMINATION_GRACE_SECONDS", "5"))
+        )
         process.communicate()
-        raise TimeoutError(f"local LLM exceeded {timeout:g} seconds")
+        raise TimeoutError(
+            f"local LLM role {role} exceeded its remaining {timeout:g}s deadline"
+        )
     if process.returncode != 0:
         raise RuntimeError(
             f"local LLM exited with {process.returncode}: {stderr.strip()[:4000]}"
@@ -229,6 +239,11 @@ def main() -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     args = parse_args()
+    if "EVENT_DEADLINE_EPOCH" not in os.environ:
+        total = float(os.getenv("LLM_TOTAL_TIMEOUT_SECONDS", "900"))
+        if total <= 0:
+            raise ValueError("LLM_TOTAL_TIMEOUT_SECONDS must be positive")
+        os.environ["LLM_WORKFLOW_DEADLINE_EPOCH"] = str(time.time() + total)
     try:
         with connect(args.db.expanduser().resolve()) as connection:
             if args.register:

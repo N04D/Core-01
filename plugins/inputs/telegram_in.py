@@ -19,6 +19,9 @@ from uuid import uuid4
 
 import requests
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from core.database import connect_database
+
 try:
     from dotenv import load_dotenv
 except ImportError:  # pragma: no cover
@@ -54,10 +57,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def connect(database: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(database.expanduser().resolve(), timeout=30.0)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA busy_timeout=30000")
-    return connection
+    return connect_database(database)
 
 
 def register_plugin(connection: sqlite3.Connection) -> None:

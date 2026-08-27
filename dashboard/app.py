@@ -16,6 +16,9 @@ from uuid import uuid4
 from flask import Flask, abort, jsonify, render_template, request, send_file
 from werkzeug.utils import secure_filename
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from core.database import connect_database
+
 
 PROJECT_ROOT: Final = Path(__file__).resolve().parent.parent
 DEFAULT_DATABASE: Final = PROJECT_ROOT / "db" / "events.db"
@@ -82,11 +85,7 @@ def create_app(database_path: Path | None = None) -> Flask:
     )
 
     def connect() -> sqlite3.Connection:
-        connection = sqlite3.connect(app.config["DATABASE"], timeout=10.0)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 10000")
-        return connection
+        return connect_database(app.config["DATABASE"], timeout=10.0)
 
     def safe_markdown_path(area: str, relative_path: str) -> Path:
         if area not in EDITABLE_AREAS:

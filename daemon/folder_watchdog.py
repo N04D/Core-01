@@ -21,6 +21,9 @@ from pathlib import Path
 from typing import Any, Final
 from uuid import uuid4
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from core.database import connect_database
+
 import yaml
 
 try:
@@ -133,8 +136,7 @@ def enqueue_document(
                 raise ValueError(f"frontmatter field {field!r} must be scalar")
             payload[field] = value
 
-    with sqlite3.connect(database, timeout=30.0) as connection:
-        connection.execute("PRAGMA busy_timeout = 30000")
+    with connect_database(database) as connection:
         cursor = connection.execute(
             "INSERT INTO events_queue (event_type, payload) VALUES (?, ?)",
             (raw_event_type, json.dumps(payload, ensure_ascii=False)),

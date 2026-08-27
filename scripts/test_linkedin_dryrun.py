@@ -16,6 +16,8 @@ from typing import Final
 
 
 PROJECT_ROOT: Final = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+from core.database import connect_database
 DEFAULT_DATABASE: Final = Path("../db/events.db")
 PLUGIN: Final = PROJECT_ROOT / "plugins" / "channels" / "pub_linkedin.py"
 SCREENSHOT_DIRECTORY: Final = PROJECT_ROOT / "vault" / "logs" / "screenshots"
@@ -61,7 +63,7 @@ def run(command: list[str], environment: dict[str, str] | None = None) -> None:
 def register_and_route(database: Path) -> None:
     """Register the plugin and configure its event route idempotently."""
     run([sys.executable, str(PLUGIN), "--register", "--db", str(database)])
-    with sqlite3.connect(database, timeout=30.0) as connection:
+    with connect_database(database) as connection:
         connection.execute(
             """
             INSERT INTO event_routes (event_type, target_plugin_name)
@@ -78,7 +80,7 @@ def register_and_route(database: Path) -> None:
 def inject_event(database: Path) -> int:
     """Insert the exact LinkedIn dry-run event payload."""
     payload = {"content": TEST_CONTENT, "dry_run": True}
-    with sqlite3.connect(database, timeout=30.0) as connection:
+    with connect_database(database) as connection:
         cursor = connection.execute(
             """
             INSERT INTO events_queue (event_type, payload, status)
@@ -132,7 +134,7 @@ def visual_command(event_id: int, database: Path) -> tuple[list[str], dict[str, 
 
 def verify_result(database: Path, event_id: int, previous: set[Path]) -> Path:
     """Verify terminal state and identify the newly generated dry-run screenshot."""
-    with sqlite3.connect(database, timeout=30.0) as connection:
+    with connect_database(database) as connection:
         row = connection.execute(
             "SELECT status, payload, error_log FROM events_queue WHERE id = ?",
             (event_id,),

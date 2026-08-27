@@ -14,6 +14,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Final
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from core.database import connect_database
+
 
 PROJECT_ROOT: Final = Path(__file__).resolve().parent.parent
 DEFAULT_DATABASE: Final = PROJECT_ROOT / "db" / "events.db"
@@ -66,8 +69,7 @@ def platform_for(path: Path, data: dict[str, Any]) -> str:
 def analyze(database: Path, analytics_dir: Path, threshold: float, evergreen_days: int) -> tuple[int, int]:
     processed = evergreen = 0
     now = datetime.now(timezone.utc)
-    with sqlite3.connect(database.expanduser().resolve(), timeout=30) as connection:
-        connection.execute("PRAGMA busy_timeout=30000")
+    with connect_database(database) as connection:
         for path in sorted(analytics_dir.expanduser().resolve().glob("*.json")):
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))

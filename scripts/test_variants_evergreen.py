@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+from core.database import connect_database
 
 from core.evergreen import analyze  # noqa: E402
 from core.setup_database import initialize_database  # noqa: E402
@@ -60,7 +61,7 @@ def main() -> int:
             variants = generate_variants(database, "Lokale AI", essay, channels, True)
         assert set(variants) == {"linkedin", "substack", "medium"}
         assert len({path.read_text() for path in variants.values()}) == 3
-        with sqlite3.connect(database) as connection:
+        with connect_database(database) as connection:
             rows = connection.execute(
                 "SELECT channel,variant_path,generation_event_id FROM content_variants ORDER BY channel"
             ).fetchall()
@@ -121,7 +122,7 @@ def main() -> int:
         processed, flagged = analyze(database, analytics, threshold=25, evergreen_days=90)
         proposals = propose_evergreen(database)
         assert processed == flagged == proposals == 1
-        with sqlite3.connect(database) as connection:
+        with connect_database(database) as connection:
             proposal = connection.execute(
                 "SELECT status,rewrite_payload FROM evergreen_proposals"
             ).fetchone()

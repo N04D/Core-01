@@ -16,6 +16,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Final, Iterable
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from core.database import connect_database
+
 
 PROJECT_ROOT: Final = Path(__file__).resolve().parent.parent
 DEFAULT_DATABASE: Final = PROJECT_ROOT / "db" / "events.db"
@@ -34,11 +37,7 @@ class SearchResult:
 
 
 def connect(path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(path.expanduser().resolve(), timeout=30)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys=ON")
-    connection.execute("PRAGMA busy_timeout=30000")
-    return connection
+    return connect_database(path)
 
 
 def ensure_schema(connection: sqlite3.Connection) -> None:

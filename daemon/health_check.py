@@ -16,6 +16,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from core.database import connect_database
+
 import requests
 from dotenv import load_dotenv
 
@@ -72,10 +75,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def connect(database: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(database.expanduser().resolve(), timeout=30)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA busy_timeout=30000")
-    return connection
+    return connect_database(database)
 
 
 def active_profiles(connection: sqlite3.Connection) -> list[tuple[PlatformProfile, str]]:

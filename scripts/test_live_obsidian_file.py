@@ -17,6 +17,8 @@ from uuid import uuid4
 
 
 PROJECT_ROOT: Final = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+from core.database import connect_database
 DEFAULT_DATABASE: Final = PROJECT_ROOT / "db" / "events.db"
 WATCHDOG: Final = PROJECT_ROOT / "daemon" / "folder_watchdog.py"
 WORKER: Final = PROJECT_ROOT / "daemon" / "worker.py"
@@ -65,7 +67,7 @@ def run(command: list[str], environment: dict[str, str] | None = None) -> None:
 def ensure_mock_route(database: Path) -> None:
     """Register and route the safe channel used by the default test."""
     run([sys.executable, str(MOCK_PLUGIN), "--register", "--db", str(database)])
-    with sqlite3.connect(database, timeout=30.0) as connection:
+    with connect_database(database) as connection:
         connection.execute(
             """
             INSERT INTO event_routes (event_type, target_plugin_name)
@@ -99,7 +101,7 @@ def create_obsidian_file(publish_channel: str) -> tuple[Path, str]:
 
 def find_event(database: Path, topic: str) -> tuple[int, str, dict[str, object]]:
     """Find the event emitted by the watchdog for this unique test."""
-    with sqlite3.connect(database, timeout=30.0) as connection:
+    with connect_database(database) as connection:
         row = connection.execute(
             """
             SELECT id, status, payload
@@ -117,7 +119,7 @@ def find_event(database: Path, topic: str) -> tuple[int, str, dict[str, object]]
 def process_until_terminal(database: Path, event_id: int) -> str:
     """Run single worker polls until the selected event reaches a terminal state."""
     for _ in range(20):
-        with sqlite3.connect(database, timeout=30.0) as connection:
+        with connect_database(database) as connection:
             row = connection.execute(
                 "SELECT status, error_log FROM events_queue WHERE id = ?",
                 (event_id,),

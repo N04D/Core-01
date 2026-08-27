@@ -13,6 +13,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Final
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from core.database import connect_database
+
 
 PROJECT_ROOT: Final = Path(__file__).resolve().parent.parent
 DEFAULT_DATABASE: Final = PROJECT_ROOT / "db" / "events.db"
@@ -35,6 +38,7 @@ class Palette:
     green: str = ""
     yellow: str = ""
     red: str = ""
+    magenta: str = ""
 
     @classmethod
     def ansi(cls) -> "Palette":
@@ -46,6 +50,7 @@ class Palette:
             green="\033[32m",
             yellow="\033[33m",
             red="\033[31m",
+            magenta="\033[35m",
         )
 
 
@@ -74,11 +79,8 @@ def parse_args() -> argparse.Namespace:
 
 def connect(database: Path) -> sqlite3.Connection:
     """Open the database in read-only mode without creating missing files."""
-    uri = f"{database.resolve().as_uri()}?mode=ro"
-    connection = sqlite3.connect(uri, uri=True, timeout=5.0)
-    connection.row_factory = sqlite3.Row
+    connection = connect_database(database, timeout=5.0, read_only=True, busy_timeout_ms=5000)
     connection.execute("PRAGMA query_only = ON")
-    connection.execute("PRAGMA busy_timeout = 5000")
     return connection
 
 

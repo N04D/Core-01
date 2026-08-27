@@ -13,6 +13,9 @@ import time
 from pathlib import Path
 from typing import Any, Final
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from core.database import connect_database
+
 
 LOGGER: Final = logging.getLogger("playbook")
 TERMINAL_STATUSES: Final = {"COMPLETED", "SIMULATED", "BLOCKED_AUTH", "FAILED"}
@@ -49,7 +52,7 @@ def dispatch_and_wait(
         raise ValueError("playbook poll interval and timeout must be positive")
 
     encoded_payload = json.dumps(payload, ensure_ascii=False)
-    with sqlite3.connect(db_path, timeout=30.0) as connection:
+    with connect_database(db_path) as connection:
         cursor = connection.execute(
             "INSERT INTO events_queue (event_type, payload) VALUES (?, ?)",
             (event_type, encoded_payload),
@@ -62,7 +65,7 @@ def dispatch_and_wait(
     last_status: str | None = None
 
     while time.monotonic() < deadline:
-        with sqlite3.connect(db_path, timeout=30.0) as connection:
+        with connect_database(db_path) as connection:
             row = connection.execute(
                 "SELECT status, payload, error_log FROM events_queue WHERE id = ?",
                 (event_id,),

@@ -13,6 +13,8 @@ from typing import Final
 
 
 PROJECT_ROOT: Final = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+from core.database import connect_database
 DATABASE: Final = PROJECT_ROOT / "db" / "events.db"
 SKILL_FILE: Final = PROJECT_ROOT / "vault" / "skills" / "test_skill.md"
 PLUGIN: Final = PROJECT_ROOT / "plugins" / "ai" / "gen_local_llm.py"
@@ -50,7 +52,7 @@ def main() -> int:
         "skill_file": str(SKILL_FILE.relative_to(PROJECT_ROOT)),
         "inputs": {"topic": "event-driven AI op een Raspberry Pi"},
     }
-    with sqlite3.connect(DATABASE) as connection:
+    with connect_database(DATABASE) as connection:
         cursor = connection.execute(
             "INSERT INTO events_queue (event_type, payload) VALUES (?, ?)",
             ("AI_GENERATION", json.dumps(payload, ensure_ascii=False)),
@@ -62,7 +64,7 @@ def main() -> int:
     os.environ["LOCAL_LLM_MOCK"] = "1"
     run([str(WORKER), "--database", str(DATABASE), "--once"])
 
-    with sqlite3.connect(DATABASE) as connection:
+    with connect_database(DATABASE) as connection:
         row = connection.execute(
             "SELECT status, payload, error_log FROM events_queue WHERE id=?",
             (event_id,),

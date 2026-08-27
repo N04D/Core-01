@@ -19,6 +19,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from plugins.media.base import MediaAsset, MediaProvider
+from core.database import connect_database
 
 
 PROJECT_ROOT: Final = Path(__file__).resolve().parents[2]
@@ -118,11 +119,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def connect(path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(path.expanduser().resolve(), timeout=30)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys=ON")
-    connection.execute("PRAGMA busy_timeout=30000")
-    return connection
+    return connect_database(path)
 
 
 def register(connection: sqlite3.Connection, provider: NightCafeProvider) -> int:

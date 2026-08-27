@@ -15,6 +15,8 @@ from uuid import uuid4
 
 
 PROJECT_ROOT: Final = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+from core.database import connect_database
 DEFAULT_DATABASE: Final = PROJECT_ROOT / "db" / "events.db"
 PLUGIN: Final = PROJECT_ROOT / "plugins" / "channels" / "pub_substack.py"
 WATCHDOG: Final = PROJECT_ROOT / "daemon" / "folder_watchdog.py"
@@ -57,7 +59,7 @@ def run(command: list[str]) -> None:
 def ensure_registration_and_route(database: Path) -> None:
     """Register the plugin and idempotently configure its event route."""
     run([sys.executable, str(PLUGIN), "--register", "--db", str(database)])
-    with sqlite3.connect(database, timeout=30.0) as connection:
+    with connect_database(database) as connection:
         registered = connection.execute(
             """
             SELECT executable_path, is_active
@@ -105,7 +107,7 @@ def create_document() -> tuple[Path, str]:
 
 def find_event(database: Path, topic: str) -> tuple[int, str, dict[str, object]]:
     """Find the uniquely tagged event emitted by the watchdog."""
-    with sqlite3.connect(database, timeout=30.0) as connection:
+    with connect_database(database) as connection:
         row = connection.execute(
             """
             SELECT id, status, payload
@@ -123,7 +125,7 @@ def find_event(database: Path, topic: str) -> tuple[int, str, dict[str, object]]
 def process_target(database: Path, event_id: int) -> tuple[str, dict[str, object]]:
     """Run bounded single worker cycles until this event is terminal."""
     for _ in range(20):
-        with sqlite3.connect(database, timeout=30.0) as connection:
+        with connect_database(database) as connection:
             row = connection.execute(
                 "SELECT status, payload, error_log FROM events_queue WHERE id=?",
                 (event_id,),

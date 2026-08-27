@@ -7,6 +7,7 @@ import argparse
 import json
 import logging
 import os
+import random
 import signal
 import socket
 import sqlite3
@@ -18,9 +19,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Final
 from uuid import uuid4
+from threading import Event as ThreadEvent
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.event_protocol import PluginResult, parse_result
+from core.database import connect_database
+from core.processes import popen_process_group, terminate_process_group
 
 try:
     from dotenv import load_dotenv
@@ -32,6 +36,11 @@ except ImportError:  # pragma: no cover - production bootstrap installs python3-
 
 LOGGER: Final = logging.getLogger("event_worker")
 MAX_RETRIES: Final = 3
+STOP_EVENT: Final = ThreadEvent()
+
+
+class WorkerStopping(RuntimeError):
+    """Raised when shutdown interrupts an active plugin."""
 
 
 @dataclass(frozen=True)
@@ -80,11 +89,7 @@ def parse_args() -> argparse.Namespace:
 
 def connect(database_path: Path) -> sqlite3.Connection:
     """Open a configured SQLite connection."""
-    connection = sqlite3.connect(database_path, timeout=30.0)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    connection.execute("PRAGMA busy_timeout = 30000")
-    return connection
+    return connect_database(database_path)
 
 
 def utc_sql_after(seconds: float) -> str:
@@ -109,9 +114,10 @@ def claim_event(
                    updated_at = CURRENT_TIMESTAMP
              WHERE id = (
                  SELECT id
-                   FROM events_queue
+                  FROM events_queue
                   WHERE status = 'PENDING'
-                  ORDER BY created_at ASC, id ASC
+                    AND next_attempt_at <= CURRENT_TIMESTAMP
+                  ORDER BY next_attempt_at ASC, created_at ASC, id ASC
                   LIMIT 1
              )
             RETURNING id, event_type, payload, retry_count, claim_token
@@ -157,6 +163,7 @@ def reap_expired_leases(connection: sqlite3.Connection) -> int:
             UPDATE events_queue
                SET status='PENDING', claimed_by=NULL, lease_until=NULL,
                    claim_token=NULL,
+                   next_attempt_at=CURRENT_TIMESTAMP,
                    error_log=CASE
                        WHEN error_log IS NULL OR error_log='' THEN 'Expired worker lease recovered'
                        ELSE substr(error_log || '; Expired worker lease recovered', 1, 8000)
@@ -166,6 +173,30 @@ def reap_expired_leases(connection: sqlite3.Connection) -> int:
             """
         )
     return cursor.rowcount
+
+
+def backoff_seconds(
+    retry_count: int,
+    *,
+    base: float | None = None,
+    maximum: float | None = None,
+    jitter: float | None = None,
+    random_value: float | None = None,
+) -> float:
+    """Calculate capped exponential backoff with symmetric random jitter."""
+    if retry_count < 1:
+        raise ValueError("retry_count must be positive")
+    base = float(os.getenv("RETRY_BACKOFF_BASE_SECONDS", "2")) if base is None else base
+    maximum = float(os.getenv("RETRY_BACKOFF_MAX_SECONDS", "300")) if maximum is None else maximum
+    jitter = float(os.getenv("RETRY_BACKOFF_JITTER", "0.25")) if jitter is None else jitter
+    if base <= 0 or maximum <= 0 or not 0 <= jitter <= 1:
+        raise ValueError("invalid retry backoff configuration")
+    sample = random.random() if random_value is None else random_value
+    if not 0 <= sample <= 1:
+        raise ValueError("random_value must be between zero and one")
+    delay = min(maximum, base * (2 ** (retry_count - 1)))
+    factor = (1 - jitter) + (2 * jitter * sample)
+    return min(maximum, delay * factor)
 
 
 def resolve_plugin(connection: sqlite3.Connection, event_type: str) -> Path:
@@ -199,10 +230,13 @@ def execute_plugin(
     database_path: Path,
     lease_seconds: float,
     heartbeat_interval: float,
+    stop_event: ThreadEvent = STOP_EVENT,
 ) -> PluginResult:
     """Execute a plugin and maintain its lease until a result envelope arrives."""
-    timeout = float(os.getenv("PLUGIN_TIMEOUT_SECONDS", "300"))
-    process = subprocess.Popen(
+    timeout = float(os.getenv("PLUGIN_TIMEOUT_SECONDS", "960"))
+    child_environment = os.environ.copy()
+    child_environment["EVENT_DEADLINE_EPOCH"] = str(time.time() + timeout)
+    process = popen_process_group(
         [
             str(executable),
             "--event_id",
@@ -211,15 +245,18 @@ def execute_plugin(
             str(database_path),
         ],
         text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        env=os.environ.copy(),
+        env=child_environment,
         cwd=executable.parent,
-        start_new_session=True,
     )
     deadline = time.monotonic() + timeout
     while True:
         remaining = deadline - time.monotonic()
+        if stop_event.is_set():
+            terminate_process_group(process)
+            process.communicate()
+            raise WorkerStopping("worker shutdown interrupted plugin execution")
         if remaining <= 0:
-            os.killpg(process.pid, signal.SIGKILL)
+            terminate_process_group(process)
             stdout, stderr = process.communicate()
             raise subprocess.TimeoutExpired(str(executable), timeout, stdout, stderr)
         try:
@@ -227,8 +264,7 @@ def execute_plugin(
             break
         except subprocess.TimeoutExpired:
             if not renew_lease(database_path, event, lease_seconds):
-                os.killpg(process.pid, signal.SIGTERM)
-                process.wait(timeout=10)
+                terminate_process_group(process)
                 raise RuntimeError("event lease ownership was lost during plugin execution")
     try:
         plugin_result = parse_result(stdout)
@@ -271,6 +307,8 @@ def record_failure(
     """Requeue a failed event or atomically move it to the dead-letter queue."""
     retry_count = event.retry_count + 1
     bounded_error = error_message[:8000]
+    delay = backoff_seconds(retry_count)
+    next_attempt_at = utc_sql_after(delay)
 
     with connection:
         if retry_count < MAX_RETRIES:
@@ -279,10 +317,11 @@ def record_failure(
                 UPDATE events_queue
                    SET status = 'PENDING', retry_count = ?, error_log = ?,
                        claimed_by=NULL, lease_until=NULL, claim_token=NULL,
+                       next_attempt_at=?,
                        updated_at = CURRENT_TIMESTAMP
                  WHERE id = ? AND status='PROCESSING' AND claim_token=?
                 """,
-                (retry_count, bounded_error, event.id, event.claim_token),
+                (retry_count, bounded_error, next_attempt_at, event.id, event.claim_token),
             )
             return
 
@@ -306,6 +345,19 @@ def record_failure(
         )
 
 
+def release_claim(connection: sqlite3.Connection, event: Event, reason: str) -> None:
+    """Release an owned claim during graceful shutdown without consuming a retry."""
+    with connection:
+        connection.execute(
+            """UPDATE events_queue
+                  SET status='PENDING', claimed_by=NULL, lease_until=NULL,
+                      claim_token=NULL, next_attempt_at=CURRENT_TIMESTAMP,
+                      error_log=?, updated_at=CURRENT_TIMESTAMP
+                WHERE id=? AND status='PROCESSING' AND claim_token=?""",
+            (reason[:8000], event.id, event.claim_token),
+        )
+
+
 def process_one(
     connection: sqlite3.Connection,
     database_path: Path,
@@ -322,9 +374,15 @@ def process_one(
     try:
         plugin = resolve_plugin(connection, event.event_type)
         result = execute_plugin(plugin, event, database_path, lease_seconds, heartbeat_interval)
+    except WorkerStopping:
+        release_claim(connection, event, "Worker stopped during plugin execution")
+        raise
     except (LookupError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
         LOGGER.exception("Event id=%s failed", event.id)
-        record_failure(connection, event, str(exc))
+        if isinstance(exc, (LookupError, FileNotFoundError, PermissionError)):
+            finalize_event(connection, event, PluginResult("FAILED", {}, {}, str(exc), False))
+        else:
+            record_failure(connection, event, str(exc))
     else:
         if result.outcome == "FAILED" and result.retryable:
             record_failure(connection, event, result.error or "Plugin requested retry")
@@ -350,10 +408,16 @@ def main() -> int:
 
     database_path = args.database.expanduser().resolve()
     worker_id = f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex[:8]}"
+    STOP_EVENT.clear()
+    signal.signal(signal.SIGINT, lambda *_: STOP_EVENT.set())
+    signal.signal(signal.SIGTERM, lambda *_: STOP_EVENT.set())
     last_reap = 0.0
     try:
         with connect(database_path) as connection:
             while True:
+                if STOP_EVENT.is_set():
+                    LOGGER.info("Worker shutdown requested")
+                    return 0
                 if time.monotonic() - last_reap >= args.reap_interval:
                     reaped = reap_expired_leases(connection)
                     if reaped:
@@ -367,7 +431,7 @@ def main() -> int:
                     return 0
                 if not processed:
                     time.sleep(args.poll_interval)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, WorkerStopping):
         LOGGER.info("Worker stopped")
         return 0
     except (OSError, sqlite3.Error, ValueError):

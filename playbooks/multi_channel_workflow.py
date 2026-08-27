@@ -18,6 +18,9 @@ from pathlib import Path
 from typing import Any, Final
 from uuid import uuid4
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from core.database import connect_database
+
 
 PROJECT_ROOT: Final = Path(__file__).resolve().parent.parent
 DEFAULT_DATABASE: Final = PROJECT_ROOT / "db" / "events.db"
@@ -73,10 +76,7 @@ def parse_args() -> argparse.Namespace:
 
 def connect(database: Path) -> sqlite3.Connection:
     """Open a configured SQLite connection."""
-    connection = sqlite3.connect(database, timeout=30.0)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA busy_timeout = 30000")
-    return connection
+    return connect_database(database)
 
 
 def validate_route(database: Path, event_type: str) -> None:
