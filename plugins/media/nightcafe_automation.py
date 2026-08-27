@@ -13,6 +13,7 @@ import os
 import re
 import sys
 import stat
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Final
@@ -53,6 +54,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--headless", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--cdp-url", default=os.getenv("NIGHTCAFE_CDP_URL"), help="Attach to a user-owned Chrome DevTools endpoint.")
     parser.add_argument("--user-data-dir", type=Path, default=os.getenv("NIGHTCAFE_USER_DATA_DIR"), help="Open a user-owned persistent Chrome profile (headed).")
+    parser.add_argument("--cdp-wait-seconds", type=float, default=15.0, help="Seconds to wait for a user-owned CDP endpoint before fallback.")
     parser.add_argument("--timeout", type=int, default=180_000)
     args = parser.parse_args()
     if args.event_id is not None and args.event_id < 1:
@@ -277,6 +279,23 @@ def has_external_session(args: argparse.Namespace) -> bool:
     return bool(args.cdp_url or args.user_data_dir or os.getenv("NIGHTCAFE_CDP_URL") or os.getenv("NIGHTCAFE_USER_DATA_DIR"))
 
 
+def connect_cdp_with_retry(chromium: object, cdp_url: str, wait_seconds: float) -> object:
+    """Attach to a user-owned CDP endpoint, tolerating delayed browser startup."""
+    if wait_seconds < 0:
+        raise ValueError("cdp wait must be non-negative")
+    deadline = time.monotonic() + wait_seconds
+    last_error: Exception | None = None
+    while True:
+        try:
+            return chromium.connect_over_cdp(cdp_url)
+        except Exception as exc:
+            last_error = exc
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(min(0.5, max(0.05, deadline - time.monotonic())))
+    raise TimeoutError(f"CDP endpoint unavailable after {wait_seconds:.1f}s: {last_error}")
+
+
 def write_mock(output: Path, metadata: dict[str, object]) -> Path:
     serialized = json.dumps(metadata, ensure_ascii=False, sort_keys=True).encode("utf-8")
     # PNG readers ignore trailing bytes; the digest remains unique per simulated daily asset.
@@ -297,9 +316,29 @@ def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
         profile_dir = args.user_data_dir or (Path(os.getenv("NIGHTCAFE_USER_DATA_DIR")) if os.getenv("NIGHTCAFE_USER_DATA_DIR") else None)
         if cdp_url:
             LOGGER.info("Attaching to user-owned Chrome over CDP: %s", cdp_url.split("?", 1)[0])
-            browser = playwright.chromium.connect_over_cdp(cdp_url)
-            context = browser.contexts[0] if browser.contexts else browser.new_context(**browser_context_options())
-            page = context.pages[0] if context.pages else context.new_page()
+            try:
+                browser = connect_cdp_with_retry(playwright.chromium, cdp_url, args.cdp_wait_seconds)
+            except Exception as exc:
+                LOGGER.warning("CDP unavailable; using managed browser fallback: %s", exc)
+                browser = None
+            if browser is None:
+                if profile_dir:
+                    profile_dir = Path(profile_dir).expanduser().resolve()
+                    profile_dir.mkdir(parents=True, exist_ok=True)
+                    context = playwright.chromium.launch_persistent_context(
+                        str(profile_dir), headless=False, **browser_context_options()
+                    )
+                    page = context.pages[0] if context.pages else context.new_page()
+                    owns_context = True
+                else:
+                    browser = playwright.chromium.launch(headless=args.headless)
+                    context = browser.new_context(storage_state=str(args.auth), **browser_context_options())
+                    page = context.new_page()
+                    owns_browser = True
+                    owns_context = True
+            else:
+                context = browser.contexts[0] if browser.contexts else browser.new_context(**browser_context_options())
+                page = context.pages[0] if context.pages else context.new_page()
         elif profile_dir:
             profile_dir = Path(profile_dir).expanduser().resolve()
             profile_dir.mkdir(parents=True, exist_ok=True)
