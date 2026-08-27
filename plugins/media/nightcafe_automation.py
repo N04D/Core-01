@@ -20,7 +20,7 @@ from typing import Final
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from core.browser_robustness import capture_sanitized_diagnostic, find_control
+from core.browser_robustness import capture_page_trace, capture_sanitized_diagnostic, find_control, find_prompt_input
 from core.database import connect_database
 from core.event_protocol import emit_result
 
@@ -191,13 +191,7 @@ def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
                 except Exception:
                     LOGGER.info("No claimable daily top-up was visible")
                 page.goto(os.getenv("NIGHTCAFE_CREATE_URL", "https://creator.nightcafe.studio/create"), wait_until="domcontentloaded", timeout=args.timeout)
-            prompt_box = find_control(
-                page,
-                roles=(("textbox", re.compile(r"prompt|describe|creation", re.I)),),
-                labels=(re.compile(r"prompt|describe|creation", re.I),),
-                css=("main textarea", "main [contenteditable='true']"),
-                timeout=15_000,
-            )
+            prompt_box = find_prompt_input(page, timeout=15_000)
             prompt_box.fill(args.prompt)
             find_control(
                 page,
@@ -236,6 +230,10 @@ def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
             output.write_bytes(response.body())
             return output, source
         except Exception:
+            trace = capture_page_trace(
+                page, PROJECT_ROOT / "vault/media/traces", "nightcafe", "prompt-selection"
+            )
+            LOGGER.error("NightCafe DOM trace saved: screenshot=%s html=%s", trace["screenshot"], trace["html"])
             diagnostic = capture_sanitized_diagnostic(
                 page, PROJECT_ROOT / "vault/logs/screenshots", "nightcafe", "generation"
             )

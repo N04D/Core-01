@@ -26,10 +26,20 @@ def find_control(
     root = scope or page
     candidates: list[Any] = []
     for role, name in roles:
-        candidates.append(root.get_by_role(role, name=name).first)
+        try:
+            candidates.append(root.get_by_role(role, name=name).first)
+        except Exception:
+            continue
     for label in labels:
-        candidates.append(root.get_by_label(label).first)
-    candidates.extend(root.locator(selector).first for selector in css)
+        try:
+            candidates.append(root.get_by_label(label).first)
+        except Exception:
+            continue
+    for selector in css:
+        try:
+            candidates.append(root.locator(selector).first)
+        except Exception:
+            continue
     if not candidates:
         raise ValueError("at least one selector candidate is required")
     slice_timeout = max(250, timeout // len(candidates))
@@ -40,6 +50,54 @@ def find_control(
         except Exception:
             continue
     raise LookupError("no accessible or scoped fallback control became visible")
+
+
+def find_prompt_input(page: Any, *, timeout: int = 30_000, scope: Any | None = None) -> Any:
+    """Find NightCafe-style prompt fields across accessible and legacy DOM variants."""
+    root = scope or page
+    candidates: list[Any] = []
+    role_names = (
+        re.compile(r"prompt|enter your prompt|describe (?:your )?creation|text to image", re.I),
+    )
+    for name in role_names:
+        try:
+            candidates.append(root.get_by_role("textbox", name=name).first)
+        except Exception:
+            pass
+    for placeholder in (
+        re.compile(r"enter\s+your\s+prompt", re.I),
+        re.compile(r"(?:describe|imagine)\s+(?:your\s+)?(?:creation|image)", re.I),
+        re.compile(r"prompt", re.I),
+    ):
+        try:
+            candidates.append(root.get_by_placeholder(placeholder).first)
+        except Exception:
+            pass
+    for label in (re.compile(r"prompt", re.I), re.compile(r"describe.*creation", re.I)):
+        try:
+            candidates.append(root.get_by_label(label).first)
+        except Exception:
+            pass
+    selectors = (
+        "textarea[placeholder*='prompt' i]", "textarea[aria-label*='prompt' i]",
+        "input[placeholder*='prompt' i]", "[contenteditable='true'][aria-label*='prompt' i]",
+        "textarea", "input[type='text']", "[role='textbox']",
+    )
+    for selector in selectors:
+        try:
+            candidates.append(root.locator(selector).first)
+        except Exception:
+            pass
+    if not candidates:
+        raise LookupError("no prompt selector candidates available")
+    slice_timeout = max(250, timeout // len(candidates))
+    for candidate in candidates:
+        try:
+            candidate.wait_for(state="visible", timeout=slice_timeout)
+            return candidate
+        except Exception:
+            continue
+    raise LookupError("no prompt input (role, placeholder, label, or scoped CSS) became visible")
 
 
 def find_with_accessible_fallbacks(
@@ -126,3 +184,28 @@ def capture_sanitized_diagnostic(
     os.chmod(screenshot, 0o600)
     os.chmod(trace, 0o600)
     return {"screenshot": str(screenshot), "trace": str(trace)}
+
+
+def capture_page_trace(
+    page: Any,
+    directory: Path,
+    platform: str,
+    operation: str,
+    error: BaseException | None = None,
+) -> dict[str, str]:
+    """Capture a permission-protected screenshot and raw DOM snapshot for selector debugging."""
+    directory.mkdir(parents=True, exist_ok=True)
+    token = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}_{uuid4().hex[:8]}"
+    screenshot = directory / f"{platform}_{operation}_{token}.png"
+    html = directory / f"{platform}_{operation}_{token}.html"
+    try:
+        page.screenshot(path=str(screenshot), full_page=True)
+    except Exception:
+        screenshot.write_bytes(b"")
+    try:
+        html.write_text(str(page.content()), encoding="utf-8")
+    except Exception as exc:
+        html.write_text(f"<!-- unable to capture DOM: {type(exc).__name__}: {exc} -->\n", encoding="utf-8")
+    os.chmod(screenshot, 0o600)
+    os.chmod(html, 0o600)
+    return {"screenshot": str(screenshot), "html": str(html), "error_type": type(error).__name__ if error else ""}

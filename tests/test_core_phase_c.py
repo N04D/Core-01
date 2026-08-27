@@ -9,7 +9,9 @@ import unittest
 from pathlib import Path
 
 from core.browser_robustness import (
+    capture_page_trace,
     find_with_accessible_fallbacks,
+    find_prompt_input,
     sanitized_url,
     verify_submission,
 )
@@ -74,6 +76,16 @@ class FakePage:
         self.calls.append("label")
         return FakeLocator(False)
 
+    def get_by_placeholder(self, _placeholder: object) -> FakeLocator:
+        self.calls.append("placeholder")
+        return FakeLocator(False)
+
+    def content(self) -> str:
+        return "<textarea placeholder='Enter your prompt'></textarea>"
+
+    def screenshot(self, *, path: str, **_kwargs: object) -> None:
+        Path(path).write_bytes(b"PNG")
+
     def locator(self, selector: str) -> FakeLocator:
         self.calls.append(f"css:{selector}")
         return FakeLocator(self.css_visible)
@@ -99,6 +111,22 @@ class BrowserRobustnessTests(unittest.TestCase):
         failing = FakePage(role_visible=False, css_visible=False)
         with self.assertRaisesRegex(RuntimeError, "explicitly confirmed"):
             verify_submission(failing, failing.url, indicators=("[role=status]",), timeout=100)
+
+    def test_prompt_fallbacks_reach_placeholder_and_broad_css(self) -> None:
+        page = FakePage(role_visible=False, css_visible=True)
+        control = find_prompt_input(page, timeout=1000)
+        self.assertIsInstance(control, FakeLocator)
+        self.assertIn("placeholder", page.calls)
+        self.assertTrue(any(call.startswith("css:") for call in page.calls))
+
+    def test_page_trace_writes_protected_screenshot_and_html(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            artifacts = capture_page_trace(FakePage(True), Path(directory), "nightcafe", "selector")
+            for key in ("screenshot", "html"):
+                path = Path(artifacts[key])
+                self.assertTrue(path.is_file())
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertIn("Enter your prompt", Path(artifacts["html"]).read_text())
 
     def test_debug_urls_are_sanitized(self) -> None:
         self.assertEqual(
