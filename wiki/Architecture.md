@@ -90,6 +90,8 @@ De AI-generator ververst de index incrementeel en haalt relevante vaultchunks op
 
 ## Betrouwbaarheid
 
+De session-health daemon controleert actieve LinkedIn-, Substack- en Medium-publishers periodiek via hun Playwright storage-state en een positieve headless accountindicator. Statuswijzigingen naar `AUTH_REQUIRED` produceren één kritisch `SYSTEM_AUTH_REQUIRED` audit-event en één ongelezen dashboardnotificatie. Met `TELEGRAM_NOTIFICATION_CHAT_ID` en `TELEGRAM_BOT_TOKEN` wordt dezelfde overgang ook naar Telegram gestuurd.
+
 - SQLite-transacties en busy timeouts.
 - Atomische queueclaims.
 - Begrensde foutlogs.

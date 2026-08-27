@@ -21,11 +21,15 @@ fi
 "${SUDO[@]}" install -o root -g root -m 0644 \
     "${SCRIPT_DIR}/social-telegram-in.service" \
     /etc/systemd/system/social-telegram-in.service
+"${SUDO[@]}" install -o root -g root -m 0644 \
+    "${SCRIPT_DIR}/social-health-check.service" \
+    /etc/systemd/system/social-health-check.service
 
 "${SUDO[@]}" systemctl daemon-reload
 "${SUDO[@]}" systemctl enable --now social-worker.service
 "${SUDO[@]}" systemctl enable --now social-watchdog.service
 "${SUDO[@]}" systemctl enable --now social-scheduler.service
+"${SUDO[@]}" systemctl enable --now social-health-check.service
 if grep -Eq '^TELEGRAM_BOT_TOKEN=.+$' "${SCRIPT_DIR}/../.env" 2>/dev/null; then
     "${SUDO[@]}" systemctl enable --now social-telegram-in.service
 else
@@ -33,4 +37,5 @@ else
 fi
 
 "${SUDO[@]}" systemctl --no-pager --full status \
-    social-worker.service social-watchdog.service social-scheduler.service
+    social-worker.service social-watchdog.service social-scheduler.service \
+    social-health-check.service

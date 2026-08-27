@@ -127,6 +127,27 @@ SCHEMA: Final[dict[str, str]] = {
             UNIQUE(document_id, chunk_index)
         )
     """,
+    "session_health": """
+        CREATE TABLE IF NOT EXISTS session_health (
+            platform TEXT PRIMARY KEY,
+            plugin_name TEXT NOT NULL,
+            auth_file TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('CONNECTED', 'AUTH_REQUIRED', 'ERROR')),
+            detail TEXT,
+            checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """,
+    "system_notifications": """
+        CREATE TABLE IF NOT EXISTS system_notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            severity TEXT NOT NULL CHECK (severity IN ('INFO', 'WARNING', 'CRITICAL')),
+            title TEXT NOT NULL,
+            message TEXT NOT NULL,
+            platform TEXT,
+            is_read INTEGER NOT NULL DEFAULT 0 CHECK (is_read IN (0, 1)),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """,
 }
 
 

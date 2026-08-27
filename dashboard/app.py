@@ -286,6 +286,39 @@ def create_app(database_path: Path | None = None) -> Flask:
             }
         )
 
+    @app.get("/api/session-health")
+    def session_health() -> Any:
+        with connect() as connection:
+            rows = connection.execute(
+                """SELECT platform,plugin_name,auth_file,status,detail,checked_at
+                     FROM session_health ORDER BY platform"""
+            ).fetchall()
+        return jsonify([dict(row) for row in rows])
+
+    @app.get("/api/notifications")
+    def notifications() -> Any:
+        unread_only = request.args.get("unread", "0") in {"1", "true"}
+        with connect() as connection:
+            rows = connection.execute(
+                """SELECT id,severity,title,message,platform,is_read,created_at
+                     FROM system_notifications WHERE (?=0 OR is_read=0)
+                     ORDER BY id DESC LIMIT 50""",
+                (int(unread_only),),
+            ).fetchall()
+        return jsonify([dict(row) for row in rows])
+
+    @app.patch("/api/notifications/<int:notification_id>")
+    def read_notification(notification_id: int) -> Any:
+        with connect() as connection:
+            cursor = connection.execute(
+                "UPDATE system_notifications SET is_read=1 WHERE id=?",
+                (notification_id,),
+            )
+            connection.commit()
+        if cursor.rowcount != 1:
+            abort(404, description="Notificatie niet gevonden")
+        return jsonify({"id": notification_id, "is_read": True})
+
     @app.get("/api/routes")
     def routes() -> Any:
         """Return event routes backed by active plugins."""

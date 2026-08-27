@@ -49,6 +49,7 @@ Units:
 - `deploy/social-watchdog.service`
 - `deploy/social-scheduler.service`
 - `deploy/social-telegram-in.service`
+- `deploy/social-health-check.service`
 
 Installeren:
 
