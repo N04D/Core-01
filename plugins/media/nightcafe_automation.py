@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sequence", type=int)
     parser.add_argument("--run-date")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument("--auth", type=Path, default=DEFAULT_AUTH)
+    parser.add_argument("--auth", type=Path, default=Path(os.getenv("NIGHTCAFE_AUTH_FILE", str(DEFAULT_AUTH))))
     parser.add_argument("--live", action="store_true", help="Allow a real external generation.")
     parser.add_argument("--simulate", action="store_true", help="Explicit local test mode; never contacts NightCafe.")
     parser.add_argument("--claim-daily", action="store_true", help="Claim an available daily top-up in live mode.")
@@ -128,14 +128,20 @@ def validated_auth(path: Path) -> Path:
     if not isinstance(state, dict):
         raise ValueError("NightCafe auth state must be a JSON object")
     cookies = state.get("cookies")
-    origins = state.get("origins")
-    if not isinstance(cookies, list) or not isinstance(origins, list):
-        raise ValueError("NightCafe auth state must contain Playwright cookies and origins arrays")
-    if not cookies and not origins:
-        raise PermissionError("NightCafe auth state contains no session data")
+    origins = state.get("origins", [])
+    if not isinstance(cookies, list):
+        raise ValueError("NightCafe auth state must contain a cookies array")
+    if origins and not isinstance(origins, list):
+        raise ValueError("NightCafe auth state origins must be an array when present")
+    if not cookies:
+        raise PermissionError("NightCafe auth state contains no cookies")
     required_domains = ("nightcafe",)
-    relevant = [cookie for cookie in cookies if isinstance(cookie, dict) and any(domain in str(cookie.get("domain", "")) for domain in required_domains)]
-    if cookies and not relevant:
+    if any(not isinstance(cookie, dict) for cookie in cookies):
+        raise ValueError("NightCafe auth cookies must be objects")
+    if any(not isinstance(cookie.get("name"), str) or not cookie["name"] or not isinstance(cookie.get("value"), str) or not isinstance(cookie.get("domain"), str) for cookie in cookies):
+        raise ValueError("NightCafe auth cookies require name, value, and domain strings")
+    relevant = [cookie for cookie in cookies if any(domain in cookie["domain"] for domain in required_domains)]
+    if not relevant:
         raise PermissionError("NightCafe auth state contains no NightCafe cookie")
     import time
     expiring = [cookie for cookie in relevant if cookie.get("expires") is not None and float(cookie.get("expires", -1)) > 0]

@@ -12,6 +12,7 @@ from pathlib import Path
 from core.database import connect_database
 from core.setup_database import initialize_database
 from playbooks.nightcafe_99names import NAMES, seed_names, select_daily_name
+from plugins.media.nightcafe_automation import validated_auth
 
 
 class NightCafeWorkflowTests(unittest.TestCase):
@@ -80,10 +81,31 @@ class NightCafeWorkflowTests(unittest.TestCase):
             db.execute("INSERT INTO event_routes(event_type,target_plugin_name) VALUES ('NIGHTCAFE_GENERATE','NightCafe Daily Stock Generator')")
             db.execute("INSERT INTO events_queue(event_type,payload) VALUES ('NIGHTCAFE_GENERATE',?)", ('{"prompt":"x","name":"Ar-Rahman","sequence":1}',))
             db.commit()
-        subprocess.run([__import__("sys").executable, str(worker), "--database", str(self.database), "--once"], check=True, text=True, capture_output=True)
+        env = __import__("os").environ.copy()
+        env["NIGHTCAFE_AUTH_FILE"] = str(self.root / "missing.json")
+        subprocess.run([__import__("sys").executable, str(worker), "--database", str(self.database), "--once"], check=True, text=True, capture_output=True, env=env)
         with connect_database(self.database) as db:
             status = db.execute("SELECT status FROM events_queue WHERE event_type='NIGHTCAFE_GENERATE'").fetchone()[0]
         self.assertEqual(status, "BLOCKED_AUTH")
+
+    def test_manual_playwright_cookie_state_without_origins_is_accepted(self) -> None:
+        auth = self.root / "nightcafe_auth.json"
+        auth.write_text(json.dumps({"cookies": [{
+            "name": "session", "value": "redacted-test-value",
+            "domain": ".nightcafe.studio", "path": "/", "httpOnly": True,
+            "secure": True, "sameSite": "Lax", "expires": -1,
+        }]}), encoding="utf-8")
+        auth.chmod(0o600)
+        self.assertEqual(validated_auth(auth), auth.resolve())
+        auth.chmod(0o640)
+        with self.assertRaises(PermissionError):
+            validated_auth(auth)
+        auth.chmod(0o600)
+        auth.write_text(json.dumps({"cookies": [{
+            "name": "session", "value": "expired", "domain": ".nightcafe.studio", "expires": 1,
+        }]}), encoding="utf-8")
+        with self.assertRaises(PermissionError):
+            validated_auth(auth)
 
 
 if __name__ == "__main__":
