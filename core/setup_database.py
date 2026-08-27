@@ -148,6 +148,45 @@ SCHEMA: Final[dict[str, str]] = {
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
     """,
+    "content_variants": """
+        CREATE TABLE IF NOT EXISTS content_variants (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_essay TEXT NOT NULL,
+            channel TEXT NOT NULL,
+            variant_path TEXT NOT NULL,
+            generation_event_id INTEGER,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(source_essay, channel, variant_path)
+        )
+    """,
+    "evergreen_posts": """
+        CREATE TABLE IF NOT EXISTS evergreen_posts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            external_key TEXT NOT NULL UNIQUE,
+            platform TEXT NOT NULL,
+            source_path TEXT,
+            analytics_file TEXT NOT NULL,
+            title TEXT,
+            content TEXT,
+            published_at TEXT NOT NULL,
+            metrics JSON NOT NULL CHECK (json_valid(metrics)),
+            engagement_score REAL NOT NULL DEFAULT 0,
+            is_evergreen INTEGER NOT NULL DEFAULT 0 CHECK (is_evergreen IN (0, 1)),
+            eligible_after TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """,
+    "evergreen_proposals": """
+        CREATE TABLE IF NOT EXISTS evergreen_proposals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            evergreen_post_id INTEGER NOT NULL REFERENCES evergreen_posts(id) ON DELETE CASCADE,
+            status TEXT NOT NULL DEFAULT 'PROPOSED'
+                CHECK (status IN ('PROPOSED', 'ACCEPTED', 'DISMISSED', 'SCHEDULED')),
+            proposed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            rewrite_payload JSON NOT NULL CHECK (json_valid(rewrite_payload)),
+            UNIQUE(evergreen_post_id, status)
+        )
+    """,
 }
 
 

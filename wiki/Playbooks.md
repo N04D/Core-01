@@ -9,6 +9,24 @@ Alle playbooks die `AI_GENERATION` dispatchen gebruiken automatisch de lokale va
 ./venv/bin/python3 scripts/test_rag_editorial.py
 ```
 
+## Multi-variant syndicatie
+
+`playbooks/master_syndication_suite.py` genereert na het bronessay automatisch unieke varianten met:
+
+- `vault/skills/variant_linkedin.md`
+- `vault/skills/variant_substack.md`
+- `vault/skills/variant_medium.md`
+
+De kanaalpayload bevat `source_essay` en `content_variant`, zodat herkomst en distributie controleerbaar blijven.
+
+Evergreen-drempel en wachttijd:
+
+```bash
+EVERGREEN_SCORE_THRESHOLD=25
+EVERGREEN_REPURPOSE_DAYS=90
+./venv/bin/python3 core/evergreen.py --db db/events.db
+```
+
 ## Master Workflow
 
 `playbooks/master_workflow.py` bestuurt een opeenvolgende baton-estafette:

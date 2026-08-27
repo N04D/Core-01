@@ -88,6 +88,12 @@ Schrijf over {{topic}} met deze context: {{research_context}}
 
 De AI-generator ververst de index incrementeel en haalt relevante vaultchunks op. Daarna doorloopt ieder concept drie lokale rollen: **Schrijver**, **Factchecker** en **Redacteur**. De Factchecker moet expliciet `APPROVED` geven. Alleen de eindtekst van de Redacteur wordt atomisch in `vault/concepten/` opgeslagen; een afwijzing of lege roloutput laat het event falen.
 
+## Kanaalvarianten en evergreen-content
+
+De Master Syndication Suite gebruikt één centraal essay als bron voor drie afzonderlijke, redactioneel gecontroleerde `AI_GENERATION`-events: een korte LinkedIn-post, een long-form Substack-artikel en een SEO-geoptimaliseerd Medium-artikel. `content_variants` bewaart de herkomst en het generatie-event; ieder publicatie-event ontvangt uitsluitend zijn eigen variant.
+
+`core/evergreen.py` normaliseert analytics naar views, likes, comments, shares en engagement en berekent een configureerbare score. Hoogpresterende posts worden in `evergreen_posts` gemarkeerd. Zodra `eligible_after` is bereikt, maakt de scheduler één `evergreen_proposals`-record met een LLM-herschrijfbriefing. Dit is bewust een voorstel en geen automatische herpublicatie.
+
 ## Betrouwbaarheid
 
 De session-health daemon controleert actieve LinkedIn-, Substack- en Medium-publishers periodiek via hun Playwright storage-state en een positieve headless accountindicator. Statuswijzigingen naar `AUTH_REQUIRED` produceren één kritisch `SYSTEM_AUTH_REQUIRED` audit-event en één ongelezen dashboardnotificatie. Met `TELEGRAM_NOTIFICATION_CHAT_ID` en `TELEGRAM_BOT_TOKEN` wordt dezelfde overgang ook naar Telegram gestuurd.

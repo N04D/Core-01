@@ -73,6 +73,33 @@ def dispatch_due(database: Path, batch_size: int) -> list[tuple[int, int, str]]:
     return dispatched
 
 
+def propose_evergreen(database: Path) -> int:
+    """Create non-publishing rewrite proposals for eligible evergreen posts."""
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with connect(database) as connection:
+        before = connection.total_changes
+        connection.execute(
+            """INSERT INTO evergreen_proposals(evergreen_post_id,rewrite_payload)
+               SELECT ep.id,json_object(
+                   'topic',COALESCE(ep.title,substr(ep.content,1,120),'Evergreen content'),
+                   'source_content',COALESCE(ep.content,''),
+                   'source_path',ep.source_path,
+                   'platform',ep.platform,
+                   'evergreen_rewrite',1
+               )
+                 FROM evergreen_posts ep
+                WHERE ep.is_evergreen=1 AND ep.eligible_after<=?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM evergreen_proposals proposal
+                       WHERE proposal.evergreen_post_id=ep.id
+                         AND proposal.status IN ('PROPOSED','ACCEPTED','SCHEDULED')
+                  )""",
+            (now,),
+        )
+        connection.commit()
+        return connection.total_changes - before
+
+
 def main() -> int:
     logging.basicConfig(
         level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -85,6 +112,9 @@ def main() -> int:
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     try:
         while not stop.is_set():
+            proposals = propose_evergreen(database)
+            if proposals:
+                LOGGER.info("EVERGREEN proposals_created=%s", proposals)
             rows = dispatch_due(database, args.batch_size)
             for schedule_id, event_id, event_type in rows:
                 LOGGER.info(

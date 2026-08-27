@@ -21,6 +21,9 @@ from uuid import uuid4
 
 
 PROJECT_ROOT: Final = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from core.evergreen import analyze as analyze_evergreen  # noqa: E402
 DEFAULT_DATABASE: Final = PROJECT_ROOT / "db" / "events.db"
 WORKER: Final = PROJECT_ROOT / "daemon" / "worker.py"
 SKILL: Final = PROJECT_ROOT / "vault" / "skills" / "master_syndication_suite.md"
@@ -32,6 +35,11 @@ DEFAULT_CHANNELS: Final = (
     "PUBLISH_SUBSTACK_PRO",
     "PUBLISH_MEDIUM",
 )
+VARIANT_SKILLS: Final = {
+    "linkedin": PROJECT_ROOT / "vault" / "skills" / "variant_linkedin.md",
+    "substack": PROJECT_ROOT / "vault" / "skills" / "variant_substack.md",
+    "medium": PROJECT_ROOT / "vault" / "skills" / "variant_medium.md",
+}
 INSIGHT_COMMANDS: Final = {
     "LinkedIn Pro Publisher & Analytics": (
         ("analytics", "--analytics"),
@@ -251,6 +259,59 @@ def generate(database: Path, topic: str, mock: bool) -> tuple[EventRun, Path]:
     return run, essay
 
 
+def variant_channel(event_type: str) -> str:
+    lowered = event_type.casefold()
+    for channel in VARIANT_SKILLS:
+        if channel in lowered:
+            return channel
+    raise SuiteError(f"no generation variant configured for {event_type}")
+
+
+def generate_variants(
+    database: Path,
+    topic: str,
+    essay: Path,
+    channels: list[tuple[str, str, Path]],
+    mock: bool,
+) -> dict[str, Path]:
+    """Generate and persist one editorially approved artifact per channel."""
+    source_text = essay.read_text(encoding="utf-8").strip()
+    maximum = int(os.getenv("VARIANT_MAX_SOURCE_CHARS", "60000"))
+    variants: dict[str, Path] = {}
+    for event_type, _plugin_name, _executable in channels:
+        channel = variant_channel(event_type)
+        if channel in variants:
+            continue
+        event_id = insert_event(
+            database,
+            "AI_GENERATION",
+            {
+                "skill_file": str(VARIANT_SKILLS[channel]),
+                "inputs": {"topic": topic, "source_essay": source_text[:maximum]},
+                "variant_channel": channel,
+                "source_essay": str(essay),
+            },
+        )
+        run = EventRun(event_id, "AI_GENERATION", "Lokale RTX 3090 Generator")
+        payload = drive_event(database, run, mock)
+        raw_path = payload.get("filepath")
+        if not isinstance(raw_path, str):
+            raise SuiteError(f"{channel} variant returned no filepath")
+        variant = Path(raw_path).expanduser().resolve(strict=True)
+        if not variant.read_text(encoding="utf-8").strip():
+            raise SuiteError(f"{channel} variant is empty")
+        with connect(database) as connection:
+            connection.execute(
+                """INSERT INTO content_variants(source_essay,channel,variant_path,generation_event_id)
+                   VALUES (?,?,?,?)""",
+                (str(essay), channel, str(variant), event_id),
+            )
+            connection.commit()
+        variants[channel] = variant
+        LOGGER.info("VARIANT ✓ channel=%s event_id=%s path=%s", channel, event_id, variant)
+    return variants
+
+
 def validate_image(path: Path | None, mock: bool) -> Path | None:
     if path is None:
         return None
@@ -276,18 +337,23 @@ def dispatch_publications(
     database: Path,
     channels: list[tuple[str, str, Path]],
     essay: Path,
+    variants: dict[str, Path],
     topic: str,
     image: Path | None,
     mock: bool,
 ) -> list[EventRun]:
     runs = []
     for event_type, plugin_name, _executable in channels:
-        archive = archive_copy(essay, event_type)
+        channel = variant_channel(event_type)
+        variant = variants[channel]
+        archive = archive_copy(variant, event_type)
         payload: dict[str, Any] = {
             "title": topic,
             "topic": topic,
             "draft_file": str(archive),
             "syndication_archive": str(archive),
+            "source_essay": str(essay),
+            "content_variant": channel,
             "tags": ["Local AI", "Automation"],
         }
         if image is not None:
@@ -374,6 +440,7 @@ def report(
     topic: str,
     generation: EventRun,
     essay: Path,
+    variants: dict[str, Path],
     publications: list[EventRun],
     insights: list[InsightRun],
 ) -> None:
@@ -382,6 +449,9 @@ def report(
     print(
         f"Generation: status={generation.status} event_id={generation.event_id} essay={essay}"
     )
+    print("Variants:")
+    for channel, path in variants.items():
+        print(f"- {channel}: {path}")
     print("Publications:")
     for run in publications:
         print(
@@ -415,6 +485,7 @@ def main() -> int:
     generation: EventRun | None = None
     essay: Path | None = None
     publications: list[EventRun] = []
+    variants: dict[str, Path] = {}
     insights: list[InsightRun] = []
     try:
         channels = active_channels(database, args.channels)
@@ -427,17 +498,25 @@ def main() -> int:
             collect,
         )
         generation, essay = generate(database, topic, args.mock)
+        variants = generate_variants(database, topic, essay, channels, args.mock)
         publications = dispatch_publications(
-            database, channels, essay, topic, image, args.mock
+            database, channels, essay, variants, topic, image, args.mock
         )
         drive_publications(database, publications, args.mock)
         if collect:
             insights = collect_insights(database, channels)
-        report(topic, generation, essay, publications, insights)
+        processed, evergreen = analyze_evergreen(
+            database,
+            ANALYTICS_DIR,
+            float(os.getenv("EVERGREEN_SCORE_THRESHOLD", "25")),
+            int(os.getenv("EVERGREEN_REPURPOSE_DAYS", "90")),
+        )
+        LOGGER.info("EVERGREEN analytics_processed=%s flagged=%s", processed, evergreen)
+        report(topic, generation, essay, variants, publications, insights)
     except (SuiteError, OSError, sqlite3.Error, ValueError, json.JSONDecodeError) as exc:
         LOGGER.error("SUITE ABORTED: %s", exc)
         if generation is not None and essay is not None:
-            report(topic, generation, essay, publications, insights)
+            report(topic, generation, essay, variants, publications, insights)
         return 1
     LOGGER.info("SUITE COMPLETE channels=%s insights=%s", len(publications), len(insights))
     return 0
