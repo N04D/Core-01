@@ -43,6 +43,8 @@ Initialiseren:
 
 Media-adapters implementeren `plugins/media/base.py` en leveren genormaliseerde assets aan de SQLite-index. Het dashboard zoekt uitsluitend in die index. Lokale bestanden worden alleen via een gevalideerd asset-id geserveerd en moeten binnen de geregistreerde bronroot vallen. Een draftkoppeling wordt automatisch overgenomen wanneer dat concept later wordt ingepland.
 
+Dashboarduploads worden atomisch opgeslagen in `vault/media/` en als bron `vault-uploads` in dezelfde Media Store-index geregistreerd. De backend controleert zowel extensie als bestands-signatuur voor PNG, JPG, GIF, WebP, MP4, WebM en MOV. Een databasefout verwijdert het zojuist opgeslagen bestand weer, zodat index en filesystem consistent blijven.
+
 ## Worker-daemon
 
 `daemon/worker.py` pollt continu met een configureerbaar interval. Plugins worden geïsoleerd als subprocess gestart. Een non-zero exitcode wordt vastgelegd; maximaal drie pogingen zijn toegestaan voordat het event atomisch naar de dead-letter queue verhuist.

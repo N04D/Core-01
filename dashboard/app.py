@@ -31,6 +31,11 @@ MEDIA_EXTENSIONS: Final = {
     ".webm": "video",
     ".mov": "video",
 }
+MEDIA_MIME_TYPES: Final = {
+    ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+    ".gif": "image/gif", ".webp": "image/webp", ".mp4": "video/mp4",
+    ".webm": "video/webm", ".mov": "video/quicktime",
+}
 PLUGIN_ANALYTICS: Final = {
     "LinkedIn Pro Publisher & Analytics": ("linkedin_analytics_*.json",),
     "LinkedIn Publisher (Productie)": ("linkedin_analytics_*.json",),
@@ -130,6 +135,19 @@ def create_app(database_path: Path | None = None) -> Flask:
             }
         )
         return record
+
+    def valid_media_signature(suffix: str, header: bytes) -> bool:
+        signatures = {
+            ".png": header.startswith(b"\x89PNG\r\n\x1a\n"),
+            ".jpg": header.startswith(b"\xff\xd8\xff"),
+            ".jpeg": header.startswith(b"\xff\xd8\xff"),
+            ".gif": header.startswith((b"GIF87a", b"GIF89a")),
+            ".webp": header.startswith(b"RIFF") and header[8:12] == b"WEBP",
+            ".mp4": len(header) >= 12 and header[4:8] == b"ftyp",
+            ".mov": len(header) >= 12 and header[4:8] == b"ftyp",
+            ".webm": header.startswith(b"\x1aE\xdf\xa3"),
+        }
+        return bool(signatures.get(suffix, False))
 
     def indexed_asset_record(row: sqlite3.Row) -> dict[str, Any]:
         try:
@@ -522,11 +540,66 @@ def create_app(database_path: Path | None = None) -> Flask:
         suffix = Path(filename).suffix.lower()
         if suffix not in MEDIA_EXTENSIONS:
             abort(400, description="Alleen JPG, PNG, GIF, WebP, MP4, WebM en MOV zijn toegestaan")
+        header = upload.stream.read(32)
+        upload.stream.seek(0)
+        if not valid_media_signature(suffix, header):
+            abort(400, description="Bestandsinhoud komt niet overeen met het mediaformaat")
         root = VAULT_ROOT / "media"
         root.mkdir(parents=True, exist_ok=True)
-        destination = root / f"{Path(filename).stem}_{uuid4().hex[:10]}{suffix}"
-        upload.save(destination)
-        return jsonify(media_record(destination)), 201
+        unique_id = uuid4().hex
+        destination = root / f"{Path(filename).stem}_{unique_id[:10]}{suffix}"
+        temporary = root / f".{destination.name}.{uuid4().hex}.part"
+        try:
+            upload.save(temporary)
+            if temporary.stat().st_size <= 0:
+                abort(400, description="Leeg bestand is niet toegestaan")
+            temporary.replace(destination)
+        finally:
+            temporary.unlink(missing_ok=True)
+        stat_result = destination.stat()
+        modified = datetime.fromtimestamp(stat_result.st_mtime, timezone.utc).isoformat()
+        metadata = json.dumps(
+            {
+                "original_filename": upload.filename,
+                "uploaded_at": datetime.now(timezone.utc).isoformat(),
+                "source": "dashboard_upload",
+            },
+            ensure_ascii=False,
+        )
+        try:
+            with connect() as connection:
+                connection.execute(
+                """INSERT INTO media_sources(source_key,display_name,provider,root_path,config,is_active,last_indexed_at)
+                   VALUES ('vault-uploads','Dashboard Uploads','vault-upload',?,'{}',1,CURRENT_TIMESTAMP)
+                   ON CONFLICT(source_key) DO UPDATE SET root_path=excluded.root_path,
+                       is_active=1,last_indexed_at=CURRENT_TIMESTAMP""",
+                    (str(root.resolve()),),
+                )
+                source_id = connection.execute(
+                    "SELECT id FROM media_sources WHERE source_key='vault-uploads'"
+                ).fetchone()[0]
+                cursor = connection.execute(
+                """INSERT INTO media_assets(source_id,external_id,filename,file_path,thumbnail_path,
+                       media_type,mime_type,file_size,modified_at,metadata,is_available)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,1)""",
+                    (source_id, unique_id, destination.name, str(destination.resolve()),
+                     str(destination.resolve()) if MEDIA_EXTENSIONS[suffix] == "image" else None,
+                     MEDIA_EXTENSIONS[suffix], MEDIA_MIME_TYPES[suffix], stat_result.st_size,
+                     modified, metadata),
+                )
+                asset_id = int(cursor.lastrowid)
+                row = indexed_asset(connection, asset_id)
+                connection.commit()
+        except sqlite3.Error:
+            destination.unlink(missing_ok=True)
+            raise
+        result = indexed_asset_record(row)
+        result.update(media_record(destination))
+        result["id"] = asset_id
+        result["source_key"] = "vault-uploads"
+        result["source_name"] = "Dashboard Uploads"
+        result["url"] = f"/api/media-store/assets/{asset_id}/content"
+        return jsonify(result), 201
 
     @app.get("/api/media/<path:relative_path>")
     def serve_media(relative_path: str) -> Any:
