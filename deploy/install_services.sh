@@ -33,6 +33,12 @@ fi
 "${SUDO[@]}" install -o root -g root -m 0644 \
     "${SCRIPT_DIR}/social-nightcafe.timer" \
     /etc/systemd/system/social-nightcafe.timer
+"${SUDO[@]}" install -o root -g root -m 0644 \
+    "${SCRIPT_DIR}/social-gdrive-sync.service" \
+    /etc/systemd/system/social-gdrive-sync.service
+"${SUDO[@]}" install -o root -g root -m 0644 \
+    "${SCRIPT_DIR}/social-gdrive-sync.timer" \
+    /etc/systemd/system/social-gdrive-sync.timer
 
 "${SUDO[@]}" systemctl daemon-reload
 "${SUDO[@]}" systemctl enable --now social-worker.service
@@ -41,6 +47,7 @@ fi
 "${SUDO[@]}" systemctl enable --now social-health-check.service
 "${SUDO[@]}" systemctl enable --now social-rag-indexer.service
 "${SUDO[@]}" systemctl enable --now social-nightcafe.timer
+"${SUDO[@]}" systemctl enable --now social-gdrive-sync.timer
 if grep -Eq '^TELEGRAM_BOT_TOKEN=.+$' "${SCRIPT_DIR}/../.env" 2>/dev/null; then
     "${SUDO[@]}" systemctl enable --now social-telegram-in.service
 else

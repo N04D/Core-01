@@ -1,0 +1,11 @@
+[Unit]
+Description=Run selective Google Drive folder sync hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=10min
+Unit=social-gdrive-sync.service
+
+[Install]
+WantedBy=timers.target

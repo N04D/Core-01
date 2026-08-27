@@ -6,6 +6,7 @@ __pycache__/
 # Local configuration and authentication state
 .env
 config/linkedin_auth.json
+config/gdrive_auth.json
 linkedin_auth.json
 auth.json
 
