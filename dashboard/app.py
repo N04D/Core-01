@@ -131,6 +131,43 @@ def create_app(database_path: Path | None = None) -> Flask:
         )
         return record
 
+    def indexed_asset_record(row: sqlite3.Row) -> dict[str, Any]:
+        try:
+            metadata = json.loads(row["metadata"])
+        except (json.JSONDecodeError, TypeError):
+            metadata = {}
+        return {
+            "id": row["id"], "source_id": row["source_id"], "source_key": row["source_key"],
+            "source_name": row["source_name"], "filename": row["filename"],
+            "content_type": row["media_type"], "mime_type": row["mime_type"],
+            "size": row["file_size"], "modified_at": row["modified_at"],
+            "prompt": row["prompt"], "metadata": metadata,
+            "url": f"/api/media-store/assets/{row['id']}/content",
+        }
+
+    def indexed_asset(connection: sqlite3.Connection, asset_id: int) -> sqlite3.Row:
+        row = connection.execute(
+            """SELECT ma.*,ms.source_key,ms.display_name source_name,ms.root_path
+                 FROM media_assets ma JOIN media_sources ms ON ms.id=ma.source_id
+                WHERE ma.id=? AND ma.is_available=1 AND ms.is_active=1""",
+            (asset_id,),
+        ).fetchone()
+        if row is None:
+            abort(404, description="Media-asset niet gevonden")
+        return row
+
+    def validated_indexed_file(row: sqlite3.Row) -> Path:
+        path = Path(row["file_path"]).expanduser().resolve()
+        root_value = row["root_path"]
+        if root_value:
+            try:
+                path.relative_to(Path(root_value).expanduser().resolve())
+            except ValueError:
+                abort(403, description="Asset valt buiten de geregistreerde bron")
+        if not path.is_file():
+            abort(404, description="Geïndexeerd bestand is niet meer beschikbaar")
+        return path
+
     def payload_media(payload: dict[str, Any]) -> dict[str, Any] | None:
         raw = payload.get("media_path") or payload.get("image_path") or payload.get("video_path")
         if not isinstance(raw, str) or not raw:
@@ -142,7 +179,17 @@ def create_app(database_path: Path | None = None) -> Flask:
             candidate = candidate.resolve()
             candidate.relative_to((VAULT_ROOT / "media").resolve())
         except (OSError, ValueError):
-            return None
+            try:
+                with connect() as connection:
+                    row = connection.execute(
+                        """SELECT ma.*,ms.source_key,ms.display_name source_name,ms.root_path
+                             FROM media_assets ma JOIN media_sources ms ON ms.id=ma.source_id
+                            WHERE ma.file_path=? AND ma.is_available=1 AND ms.is_active=1""",
+                        (str(candidate),),
+                    ).fetchone()
+                return indexed_asset_record(row) if row else None
+            except sqlite3.Error:
+                return None
         if not candidate.is_file() or candidate.suffix.lower() not in MEDIA_EXTENSIONS:
             return None
         return media_record(candidate)
@@ -325,6 +372,114 @@ def create_app(database_path: Path | None = None) -> Flask:
         paths = [path for path in root.rglob("*") if path.is_file() and path.suffix.lower() in MEDIA_EXTENSIONS]
         return jsonify([media_record(path) for path in sorted(paths, key=lambda item: item.stat().st_mtime, reverse=True)])
 
+    @app.get("/api/media-store/sources")
+    def media_store_sources() -> Any:
+        with connect() as connection:
+            rows = connection.execute(
+                """SELECT ms.id,ms.source_key,ms.display_name,ms.provider,ms.is_active,
+                          ms.last_indexed_at,COUNT(CASE WHEN ma.is_available=1 THEN 1 END) asset_count
+                     FROM media_sources ms LEFT JOIN media_assets ma ON ma.source_id=ms.id
+                    GROUP BY ms.id ORDER BY ms.display_name"""
+            ).fetchall()
+        return jsonify([dict(row) for row in rows])
+
+    @app.get("/api/media-store/assets")
+    def media_store_assets() -> Any:
+        query = request.args.get("q", "").strip()
+        source = request.args.get("source", "").strip()
+        media_type = request.args.get("type", "").strip()
+        if media_type and media_type not in {"image", "video"}:
+            abort(400, description="type moet image of video zijn")
+        where = ["ma.is_available=1", "ms.is_active=1"]
+        parameters: list[Any] = []
+        if query:
+            where.append("(ma.filename LIKE ? ESCAPE '\\' OR COALESCE(ma.prompt,'') LIKE ? ESCAPE '\\' OR ma.metadata LIKE ? ESCAPE '\\')")
+            escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            parameters.extend([f"%{escaped}%"] * 3)
+        if source:
+            where.append("ms.source_key=?")
+            parameters.append(source)
+        if media_type:
+            where.append("ma.media_type=?")
+            parameters.append(media_type)
+        with connect() as connection:
+            rows = connection.execute(
+                f"""SELECT ma.*,ms.source_key,ms.display_name source_name,ms.root_path
+                       FROM media_assets ma JOIN media_sources ms ON ms.id=ma.source_id
+                      WHERE {' AND '.join(where)} ORDER BY ma.modified_at DESC,ma.id DESC LIMIT 250""",
+                parameters,
+            ).fetchall()
+        return jsonify([indexed_asset_record(row) for row in rows])
+
+    @app.get("/api/media-store/targets")
+    def media_store_targets() -> Any:
+        drafts = [
+            {"target_type": "DRAFT", "target_ref": str(path.relative_to(VAULT_ROOT / "concepten")), "label": path.name}
+            for path in sorted((VAULT_ROOT / "concepten").glob("*.md"), key=lambda item: item.stat().st_mtime, reverse=True)
+        ]
+        with connect() as connection:
+            schedules = connection.execute(
+                "SELECT id,event_type,payload,scheduled_time FROM scheduled_events WHERE status='PENDING' ORDER BY scheduled_time"
+            ).fetchall()
+        for row in schedules:
+            try:
+                payload = json.loads(row["payload"])
+            except json.JSONDecodeError:
+                payload = {}
+            drafts.append({
+                "target_type": "SCHEDULE", "target_ref": str(row["id"]),
+                "label": f"{row['event_type']} · {row['scheduled_time']} · {Path(payload.get('draft_file', '')).name}",
+            })
+        return jsonify(drafts)
+
+    @app.get("/api/media-store/assets/<int:asset_id>/content")
+    def media_store_content(asset_id: int) -> Any:
+        with connect() as connection:
+            row = indexed_asset(connection, asset_id)
+            path = validated_indexed_file(row)
+        return send_file(path, conditional=True)
+
+    @app.post("/api/media-store/assets/<int:asset_id>/link")
+    def link_media_asset(asset_id: int) -> Any:
+        body = request.get_json(silent=True) or {}
+        target_type = str(body.get("target_type", "")).upper()
+        target_ref = body.get("target_ref")
+        if target_type not in {"DRAFT", "SCHEDULE"} or not isinstance(target_ref, str) or not target_ref:
+            abort(400, description="target_type en target_ref zijn verplicht")
+        with connect() as connection:
+            asset = indexed_asset(connection, asset_id)
+            media_path = validated_indexed_file(asset)
+            if target_type == "DRAFT":
+                draft = safe_markdown_path("concepten", target_ref)
+                if not draft.is_file():
+                    abort(404, description="Draft niet gevonden")
+                canonical_ref = str(draft.relative_to(VAULT_ROOT / "concepten"))
+            else:
+                try:
+                    schedule_id = int(target_ref)
+                except ValueError:
+                    abort(400, description="Ongeldig planning-id")
+                row = connection.execute("SELECT payload,status FROM scheduled_events WHERE id=?", (schedule_id,)).fetchone()
+                if row is None:
+                    abort(404, description="Planning niet gevonden")
+                if row["status"] != "PENDING":
+                    abort(409, description="Media kan alleen aan een PENDING planning worden gekoppeld")
+                payload = json.loads(row["payload"])
+                payload.update({
+                    "media_asset_id": asset_id, "media_path": str(media_path),
+                    "content_type": asset["media_type"],
+                    "image_path" if asset["media_type"] == "image" else "video_path": str(media_path),
+                })
+                connection.execute("UPDATE scheduled_events SET payload=? WHERE id=?", (json.dumps(payload, ensure_ascii=False), schedule_id))
+                canonical_ref = str(schedule_id)
+            connection.execute(
+                """INSERT INTO media_links(asset_id,target_type,target_ref) VALUES (?,?,?)
+                   ON CONFLICT(asset_id,target_type,target_ref) DO NOTHING""",
+                (asset_id, target_type, canonical_ref),
+            )
+            connection.commit()
+        return jsonify({"linked": True, "asset_id": asset_id, "target_type": target_type, "target_ref": canonical_ref})
+
     @app.post("/api/media")
     def upload_media() -> Any:
         upload = request.files.get("file")
@@ -377,6 +532,18 @@ def create_app(database_path: Path | None = None) -> Flask:
             content_type = MEDIA_EXTENSIONS[media.suffix.lower()]
         schedule_ids: list[int] = []
         with connect() as connection:
+            if media is None:
+                linked = connection.execute(
+                    """SELECT ma.* FROM media_links ml JOIN media_assets ma ON ma.id=ml.asset_id
+                        JOIN media_sources ms ON ms.id=ma.source_id
+                       WHERE ml.target_type='DRAFT' AND ml.target_ref=?
+                         AND ma.is_available=1 AND ms.is_active=1
+                       ORDER BY ml.created_at DESC,ml.id DESC LIMIT 1""",
+                    (str(draft.relative_to(VAULT_ROOT / "concepten")),),
+                ).fetchone()
+                if linked is not None:
+                    media = Path(linked["file_path"]).expanduser().resolve()
+                    content_type = linked["media_type"]
             for event_type in event_types:
                 route = connection.execute(
                     """SELECT 1 FROM event_routes er JOIN plugin_registry pr

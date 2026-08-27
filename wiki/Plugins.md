@@ -10,6 +10,21 @@ Bestand: `plugins/inputs/telegram_in.py`
 
 Verwerkt tekst, foto's en video's via de Telegram Bot API. Configureer `TELEGRAM_BOT_TOKEN` in `.env`; beperk productie-invoer optioneel met `TELEGRAM_ALLOWED_CHAT_IDS`. De offline testmodus gebruikt `--mock-message`. Media wordt begrensd door `TELEGRAM_MAX_MEDIA_BYTES` (standaard 100 MiB).
 
+## Media
+
+### NightCafe Local Media
+
+Bestand: `plugins/media/media_nightcafe.py`
+
+Indexeert afbeeldingen en video's recursief uit een lokale NightCafe-map. Prompts en modelmetadata worden gelezen uit gelijknamige `.json`- of `.txt`-sidecars en, wanneer Pillow beschikbaar is, uit ingebedde afbeeldingsmetadata.
+
+```bash
+./venv/bin/python3 plugins/media/media_nightcafe.py \
+  --register --index --db db/events.db --source-dir /pad/naar/NightCafe
+```
+
+De standaardbron kan via `NIGHTCAFE_MEDIA_DIR` worden ingesteld. Nieuwe providers, zoals Google Drive, implementeren hetzelfde `MediaProvider`-contract.
+
 ## AI
 
 ### Lokale RTX 3090 Generator

@@ -66,6 +66,47 @@ SCHEMA: Final[dict[str, str]] = {
                 CHECK (status IN ('PENDING', 'DISPATCHED', 'CANCELLED', 'FAILED'))
         )
     """,
+    "media_sources": """
+        CREATE TABLE IF NOT EXISTS media_sources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_key TEXT NOT NULL UNIQUE,
+            display_name TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            root_path TEXT,
+            config JSON NOT NULL DEFAULT '{}' CHECK (json_valid(config)),
+            is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+            last_indexed_at TEXT
+        )
+    """,
+    "media_assets": """
+        CREATE TABLE IF NOT EXISTS media_assets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_id INTEGER NOT NULL REFERENCES media_sources(id) ON DELETE CASCADE,
+            external_id TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            thumbnail_path TEXT,
+            media_type TEXT NOT NULL CHECK (media_type IN ('image', 'video')),
+            mime_type TEXT,
+            file_size INTEGER NOT NULL DEFAULT 0,
+            modified_at TEXT,
+            prompt TEXT,
+            metadata JSON NOT NULL DEFAULT '{}' CHECK (json_valid(metadata)),
+            is_available INTEGER NOT NULL DEFAULT 1 CHECK (is_available IN (0, 1)),
+            indexed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(source_id, external_id)
+        )
+    """,
+    "media_links": """
+        CREATE TABLE IF NOT EXISTS media_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            asset_id INTEGER NOT NULL REFERENCES media_assets(id) ON DELETE CASCADE,
+            target_type TEXT NOT NULL CHECK (target_type IN ('DRAFT', 'SCHEDULE')),
+            target_ref TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(asset_id, target_type, target_ref)
+        )
+    """,
 }
 
 

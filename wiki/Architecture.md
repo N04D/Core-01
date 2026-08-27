@@ -21,6 +21,9 @@ PENDING → PROCESSING → COMPLETED
 - `event_routes`: stabiele eventtype-naar-pluginroutering.
 - `plugin_registry`: uitvoerbare plugininventaris met activatiestatus.
 - `scheduled_events`: toekomstige events met UTC-uitvoertijd en dispatchstatus.
+- `media_sources`: geconfigureerde lokale of externe mediaproviders.
+- `media_assets`: genormaliseerde, doorzoekbare assetmetadata en beschikbaarheid.
+- `media_links`: koppelingen van assets aan drafts en geplande events.
 
 Initialiseren:
 
@@ -35,6 +38,10 @@ Initialiseren:
 ## Inkomende Telegram-hub
 
 `plugins/inputs/telegram_in.py` pollt de Telegram Bot API, bewaart media in `vault/media/` en maakt een Markdown-concept met YAML-frontmatter in `vault/concepten/`. Elk bericht krijgt een afgerond `TELEGRAM_INBOUND` audit-event. Met `--auto-dispatch` ontstaan daarnaast publicatie-events voor uitsluitend actieve LinkedIn Pro-, Substack Pro- en Medium-routes.
+
+## Modulaire Media Store
+
+Media-adapters implementeren `plugins/media/base.py` en leveren genormaliseerde assets aan de SQLite-index. Het dashboard zoekt uitsluitend in die index. Lokale bestanden worden alleen via een gevalideerd asset-id geserveerd en moeten binnen de geregistreerde bronroot vallen. Een draftkoppeling wordt automatisch overgenomen wanneer dat concept later wordt ingepland.
 
 ## Worker-daemon
 
