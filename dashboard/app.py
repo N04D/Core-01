@@ -351,10 +351,28 @@ def create_app(database_path: Path | None = None) -> Flask:
 
     @app.get("/api/scheduled-events")
     def scheduled_events() -> Any:
+        start = request.args.get("start", "").strip()
+        end = request.args.get("end", "").strip()
+        where: list[str] = []
+        parameters: list[str] = []
+        for value, operator, label in ((start, ">=", "start"), (end, "<", "end")):
+            if not value:
+                continue
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                abort(400, description=f"{label} moet geldige ISO-8601 zijn")
+            if parsed.tzinfo is None:
+                abort(400, description=f"{label} moet een tijdzone bevatten")
+            where.append(f"scheduled_time {operator} ?")
+            parameters.append(parsed.astimezone(timezone.utc).isoformat(timespec="seconds"))
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
         with connect() as connection:
             rows = connection.execute(
-                """SELECT id,event_type,payload,scheduled_time,status
-                     FROM scheduled_events ORDER BY scheduled_time DESC,id DESC LIMIT 250"""
+                f"""SELECT id,event_type,payload,scheduled_time,status
+                       FROM scheduled_events {clause}
+                      ORDER BY scheduled_time ASC,id ASC LIMIT 500""",
+                parameters,
             ).fetchall()
         records = []
         for row in rows:
