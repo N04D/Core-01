@@ -96,6 +96,20 @@ class AgendaApiTest(unittest.TestCase):
         ):
             self.assertIn(marker, page)
 
+    def test_dashboard_contains_editor_safety_and_aria_states(self) -> None:
+        page = self.client.get("/").get_data(as_text=True)
+        for marker in (
+            'id="editor-dirty"',
+            "confirmDiscardEditorChanges",
+            "beforeunload",
+            'aria-pressed="false"',
+            'role="listbox"',
+            'aria-selected=',
+            ':focus-visible',
+            'aria-current="page"',
+        ):
+            self.assertIn(marker, page)
+
 
 if __name__ == "__main__":
     unittest.main()
