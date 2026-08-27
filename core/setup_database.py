@@ -107,6 +107,26 @@ SCHEMA: Final[dict[str, str]] = {
             UNIQUE(asset_id, target_type, target_ref)
         )
     """,
+    "rag_documents": """
+        CREATE TABLE IF NOT EXISTS rag_documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_path TEXT NOT NULL UNIQUE,
+            content_hash TEXT NOT NULL,
+            modified_at TEXT NOT NULL,
+            indexed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """,
+    "rag_chunks": """
+        CREATE TABLE IF NOT EXISTS rag_chunks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_id INTEGER NOT NULL REFERENCES rag_documents(id) ON DELETE CASCADE,
+            chunk_index INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            vector JSON NOT NULL CHECK (json_valid(vector)),
+            token_count INTEGER NOT NULL,
+            UNIQUE(document_id, chunk_index)
+        )
+    """,
 }
 
 

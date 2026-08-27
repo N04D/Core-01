@@ -22,6 +22,8 @@ PROJECT_ROOT: Final = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.markdown_parser import MarkdownTemplateError, render_template  # noqa: E402
+from core.editorial_loop import EditorialLoopError, run_editorial_loop  # noqa: E402
+from core.rag_index import DEFAULT_ROOTS, refresh_index, search  # noqa: E402
 
 
 PLUGIN_NAME: Final = "Lokale RTX 3090 Generator"
@@ -94,7 +96,7 @@ def resolve_skill(payload: dict[str, Any]) -> Path:
     return path.resolve(strict=True)
 
 
-def generate(prompt: str, mock: bool) -> str:
+def generate(prompt: str, mock: bool, role: str = "SCHRIJVER") -> str:
     timeout = float(os.getenv("LOCAL_LLM_TIMEOUT_SECONDS", "300"))
     if timeout <= 0:
         raise ValueError("LOCAL_LLM_TIMEOUT_SECONDS must be positive")
@@ -105,10 +107,16 @@ def generate(prompt: str, mock: bool) -> str:
         "yes",
     }
     if mock_enabled:
+        if role == "FACTCHECKER":
+            checked = prompt.rsplit("CONCEPT:\n", 1)[-1].strip()
+            return f"{checked}\n\nFACTCHECK_STATUS: APPROVED"
+        if role == "REDACTEUR":
+            checked = prompt.rsplit("GECONTROLEERD CONCEPT:\n", 1)[-1].strip()
+            return checked + "\n\n---\n\n_Redactioneel gecontroleerd._"
         command = [
             sys.executable,
             "-c",
-            "import sys; p=sys.stdin.read(); print('# Mock LLM Result\\n\\n' + p)",
+            "import sys; p=sys.stdin.read(); b=p.split('BRIEFING:\\n',1)[-1].split('\\n\\nVAULTCONTEXT:',1)[0]; print('# Mock LLM Result\\n\\n' + b)",
         ]
     else:
         command = shlex.split(os.getenv("LOCAL_LLM_COMMAND", "ollama run llama3.1:8b"))
@@ -204,7 +212,38 @@ def fail_event(connection: sqlite3.Connection, event_id: int, message: str) -> N
 def process_event(connection: sqlite3.Connection, event_id: int, mock: bool) -> Path:
     payload = load_payload(connection, event_id)
     prompt = render_template(resolve_skill(payload), payload)
-    output_path = save_output(event_id, generate(prompt, mock))
+    database = Path(connection.execute("PRAGMA database_list").fetchone()[2]).resolve()
+    if os.getenv("RAG_AUTO_INDEX", "1").lower() in {"1", "true", "yes"}:
+        indexed, skipped, chunks = refresh_index(database, DEFAULT_ROOTS)
+        LOGGER.info(
+            "RAG refresh: indexed=%s unchanged=%s chunks=%s",
+            indexed,
+            skipped,
+            chunks,
+        )
+    inputs = payload.get("inputs", {})
+    topic = inputs.get("topic") if isinstance(inputs, dict) else None
+    matches = search(
+        database,
+        str(topic or prompt),
+        limit=int(os.getenv("RAG_CONTEXT_CHUNKS", "5")),
+    )
+    context = "\n\n".join(
+        f"[Bron: {Path(item.source_path).name}, chunk {item.chunk_index}, score {item.score:.3f}]\n{item.content}"
+        for item in matches
+    )
+    editorial = run_editorial_loop(
+        prompt,
+        context,
+        lambda role, role_prompt: generate(role_prompt, mock, role),
+    )
+    output_path = save_output(event_id, editorial.final_text)
+    payload["rag_sources"] = [
+        {"path": item.source_path, "chunk": item.chunk_index, "score": round(item.score, 4)}
+        for item in matches
+    ]
+    payload["editorial_roles"] = list(editorial.roles)
+    payload["editorial_status"] = "APPROVED"
     complete_event(connection, event_id, payload, output_path)
     return output_path
 
@@ -228,7 +267,8 @@ def main() -> int:
                     raise
                 LOGGER.info("Event %s completed: %s", args.event_id, output_path)
     except (OSError, sqlite3.Error, ValueError, LookupError, json.JSONDecodeError,
-            MarkdownTemplateError, subprocess.SubprocessError, TimeoutError):
+            MarkdownTemplateError, EditorialLoopError,
+            subprocess.SubprocessError, TimeoutError):
         LOGGER.exception("Local LLM plugin failed")
         return 1
     return 0

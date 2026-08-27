@@ -82,6 +82,12 @@ required_inputs: [topic, research_context]
 Schrijf over {{topic}} met deze context: {{research_context}}
 ```
 
+## Lokale RAG en redactie-loop
+
+`core/rag_index.py` splitst Markdown uit de Obsidian-vault in overlappende chunks en bewaart genormaliseerde, deterministische feature-hashing-vectoren in SQLite. Retrieval gebruikt cosinusovereenkomst en werkt zonder externe vectorservice of native ML-library.
+
+De AI-generator ververst de index incrementeel en haalt relevante vaultchunks op. Daarna doorloopt ieder concept drie lokale rollen: **Schrijver**, **Factchecker** en **Redacteur**. De Factchecker moet expliciet `APPROVED` geven. Alleen de eindtekst van de Redacteur wordt atomisch in `vault/concepten/` opgeslagen; een afwijzing of lege roloutput laat het event falen.
+
 ## Betrouwbaarheid
 
 - SQLite-transacties en busy timeouts.

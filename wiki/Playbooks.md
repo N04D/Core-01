@@ -1,5 +1,14 @@
 # Playbooks en tests
 
+## RAG-verrijkte generatie
+
+Alle playbooks die `AI_GENERATION` dispatchen gebruiken automatisch de lokale vaultindex via `plugins/ai/gen_local_llm.py`. `RAG_AUTO_INDEX=0` schakelt de incrementele refresh uit; `RAG_CONTEXT_CHUNKS` bepaalt het maximale aantal contextchunks (standaard vijf).
+
+```bash
+./venv/bin/python3 core/rag_index.py --db db/events.db --query "lokale AI"
+./venv/bin/python3 scripts/test_rag_editorial.py
+```
+
 ## Master Workflow
 
 `playbooks/master_workflow.py` bestuurt een opeenvolgende baton-estafette:
