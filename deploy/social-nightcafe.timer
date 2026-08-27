@@ -1,0 +1,11 @@
+[Unit]
+Description=Run NightCafe 99 Names generator daily
+
+[Timer]
+OnCalendar=*-*-* 08:15:00 Europe/Paris
+Persistent=true
+RandomizedDelaySec=15min
+Unit=social-nightcafe.service
+
+[Install]
+WantedBy=timers.target

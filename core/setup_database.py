@@ -124,6 +124,30 @@ SCHEMA: Final[dict[str, str]] = {
             UNIQUE(asset_id, target_type, target_ref)
         )
     """,
+    "nightcafe_names": """
+        CREATE TABLE IF NOT EXISTS nightcafe_names (
+            sequence INTEGER PRIMARY KEY CHECK (sequence BETWEEN 1 AND 99),
+            arabic_name TEXT NOT NULL,
+            transliteration TEXT NOT NULL,
+            meaning TEXT NOT NULL
+        )
+    """,
+    "nightcafe_daily_runs": """
+        CREATE TABLE IF NOT EXISTS nightcafe_daily_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_date TEXT NOT NULL UNIQUE,
+            name_sequence INTEGER NOT NULL REFERENCES nightcafe_names(sequence),
+            prompt TEXT,
+            status TEXT NOT NULL DEFAULT 'PREPARED'
+                CHECK (status IN ('PREPARED', 'SIMULATED', 'COMPLETED', 'FAILED', 'AUTH_REQUIRED')),
+            asset_id INTEGER REFERENCES media_assets(id),
+            output_path TEXT,
+            error_log TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(name_sequence, run_date)
+        )
+    """,
     "rag_documents": """
         CREATE TABLE IF NOT EXISTS rag_documents (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -264,6 +288,8 @@ INDEXES: Final[tuple[str, ...]] = (
     "ON dead_letter_queue(event_type, created_at, id)",
     "CREATE INDEX IF NOT EXISTS idx_dlq_redrives_source "
     "ON dead_letter_redrives(dead_letter_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_nightcafe_runs_status_date "
+    "ON nightcafe_daily_runs(status, run_date)",
 )
 
 
