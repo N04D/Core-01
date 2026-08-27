@@ -296,6 +296,24 @@ def connect_cdp_with_retry(chromium: object, cdp_url: str, wait_seconds: float) 
     raise TimeoutError(f"CDP endpoint unavailable after {wait_seconds:.1f}s: {last_error}")
 
 
+def managed_context_options(auth_path: Path) -> dict[str, object]:
+    """Build managed-context options only after validating the persisted auth state."""
+    auth = validated_auth(auth_path)
+    LOGGER.info("Managed browser will reuse Playwright storage state: %s", auth)
+    return {"storage_state": str(auth), **browser_context_options()}
+
+
+def launch_managed_context(playwright: object, args: argparse.Namespace) -> tuple[object, object]:
+    """Launch a controlled Chromium and load the existing NightCafe session."""
+    browser = playwright.chromium.launch(headless=args.headless)
+    try:
+        context = browser.new_context(**managed_context_options(args.auth))
+    except Exception:
+        browser.close()
+        raise
+    return browser, context
+
+
 def write_mock(output: Path, metadata: dict[str, object]) -> Path:
     serialized = json.dumps(metadata, ensure_ascii=False, sort_keys=True).encode("utf-8")
     # PNG readers ignore trailing bytes; the digest remains unique per simulated daily asset.
@@ -331,8 +349,7 @@ def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
                     page = context.pages[0] if context.pages else context.new_page()
                     owns_context = True
                 else:
-                    browser = playwright.chromium.launch(headless=args.headless)
-                    context = browser.new_context(storage_state=str(args.auth), **browser_context_options())
+                    browser, context = launch_managed_context(playwright, args)
                     page = context.new_page()
                     owns_browser = True
                     owns_context = True
@@ -349,8 +366,7 @@ def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
             page = context.pages[0] if context.pages else context.new_page()
             owns_context = True
         else:
-            browser = playwright.chromium.launch(headless=args.headless)
-            context = browser.new_context(storage_state=str(args.auth), **browser_context_options())
+            browser, context = launch_managed_context(playwright, args)
             page = context.new_page()
             owns_browser = True
             owns_context = True

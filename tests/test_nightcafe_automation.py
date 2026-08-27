@@ -12,7 +12,7 @@ from pathlib import Path
 from core.database import connect_database
 from core.setup_database import initialize_database
 from playbooks.nightcafe_99names import NAMES, seed_names, select_daily_name
-from plugins.media.nightcafe_automation import browser_context_options, click_with_overlay_fallback, has_external_session, navigate_to_create_surface, validated_auth
+from plugins.media.nightcafe_automation import browser_context_options, click_with_overlay_fallback, has_external_session, managed_context_options, navigate_to_create_surface, validated_auth
 
 
 class _VisibleLocator:
@@ -147,6 +147,7 @@ class NightCafeWorkflowTests(unittest.TestCase):
         }]}), encoding="utf-8")
         auth.chmod(0o600)
         self.assertEqual(validated_auth(auth), auth.resolve())
+        self.assertEqual(managed_context_options(auth)["storage_state"], str(auth.resolve()))
         auth.chmod(0o640)
         with self.assertRaises(PermissionError):
             validated_auth(auth)
