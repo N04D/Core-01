@@ -196,6 +196,18 @@ SCHEMA: Final[dict[str, str]] = {
             UNIQUE(chat_id, message_id)
         )
     """,
+    "dead_letter_redrives": """
+        CREATE TABLE IF NOT EXISTS dead_letter_redrives (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            dead_letter_id INTEGER NOT NULL,
+            new_event_id INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            requested_by TEXT NOT NULL DEFAULT 'dashboard',
+            reason TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(new_event_id)
+        )
+    """,
     "content_variants": """
         CREATE TABLE IF NOT EXISTS content_variants (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -248,6 +260,10 @@ INDEXES: Final[tuple[str, ...]] = (
     "ON scheduled_events(status, scheduled_time, id)",
     "CREATE INDEX IF NOT EXISTS idx_publication_attempts_status "
     "ON publication_attempts(status, updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_dlq_event_type_created "
+    "ON dead_letter_queue(event_type, created_at, id)",
+    "CREATE INDEX IF NOT EXISTS idx_dlq_redrives_source "
+    "ON dead_letter_redrives(dead_letter_id, created_at)",
 )
 
 

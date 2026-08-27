@@ -75,22 +75,36 @@ def vectorize(text: str) -> list[float]:
     return [value / norm for value in vector] if norm else vector
 
 
-def chunk_markdown(text: str, maximum: int = 1600, overlap: int = 180) -> list[str]:
-    """Split Markdown on paragraph boundaries with bounded character overlap."""
-    if maximum < 200 or overlap < 0 or overlap >= maximum:
-        raise ValueError("invalid chunk dimensions")
+def truncate_tokens(text: str, maximum_tokens: int) -> str:
+    """Return text containing at most the requested number of index tokens."""
+    if maximum_tokens < 1:
+        return ""
+    matches = list(TOKEN_PATTERN.finditer(text))
+    if len(matches) <= maximum_tokens:
+        return text
+    return text[: matches[maximum_tokens - 1].end()].rstrip()
+
+
+def chunk_markdown(
+    text: str, maximum_tokens: int = 320, overlap_tokens: int = 32
+) -> list[str]:
+    """Split Markdown into chunks with strict token and overlap budgets."""
+    if maximum_tokens < 32 or overlap_tokens < 0 or overlap_tokens >= maximum_tokens:
+        raise ValueError("invalid chunk token budgets")
     paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
     chunks: list[str] = []
     current = ""
     for paragraph in paragraphs:
-        pieces = [paragraph[index:index + maximum] for index in range(0, len(paragraph), maximum)] or [paragraph]
+        words = paragraph.split()
+        pieces = [" ".join(words[index:index + maximum_tokens]) for index in range(0, len(words), maximum_tokens)] or [paragraph]
         for piece in pieces:
             candidate = f"{current}\n\n{piece}".strip()
-            if current and len(candidate) > maximum:
+            if current and len(tokens(candidate)) > maximum_tokens:
                 chunks.append(current)
-                current = f"{current[-overlap:]}\n\n{piece}".strip() if overlap else piece
+                overlap = " ".join(current.split()[-overlap_tokens:])
+                current = truncate_tokens(f"{overlap}\n\n{piece}".strip(), maximum_tokens)
             else:
-                current = candidate
+                current = truncate_tokens(candidate, maximum_tokens)
     if current:
         chunks.append(current)
     return chunks
@@ -107,7 +121,10 @@ def markdown_paths(roots: Iterable[Path]) -> list[Path]:
     return sorted(paths)
 
 
-def refresh_index(database: Path, roots: Iterable[Path] = DEFAULT_ROOTS) -> tuple[int, int, int]:
+def refresh_index(
+    database: Path, roots: Iterable[Path] = DEFAULT_ROOTS, *,
+    maximum_chunk_tokens: int = 320, overlap_tokens: int = 32,
+) -> tuple[int, int, int]:
     """Incrementally index changed files and remove entries no longer in scope."""
     paths = markdown_paths(roots)
     canonical = {str(path) for path in paths}
@@ -117,7 +134,10 @@ def refresh_index(database: Path, roots: Iterable[Path] = DEFAULT_ROOTS) -> tupl
         existing = {row["source_path"]: row for row in connection.execute("SELECT id,source_path,content_hash FROM rag_documents")}
         for path in paths:
             content = path.read_text(encoding="utf-8", errors="replace")
-            digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            digest_material = (
+                f"rag-token-v2:{maximum_chunk_tokens}:{overlap_tokens}\0{content}"
+            )
+            digest = hashlib.sha256(digest_material.encode("utf-8")).hexdigest()
             prior = existing.get(str(path))
             if prior and prior["content_hash"] == digest:
                 skipped += 1
@@ -132,7 +152,7 @@ def refresh_index(database: Path, roots: Iterable[Path] = DEFAULT_ROOTS) -> tupl
                 )
                 document_id = connection.execute("SELECT id FROM rag_documents WHERE source_path=?", (str(path),)).fetchone()[0]
                 connection.execute("DELETE FROM rag_chunks WHERE document_id=?", (document_id,))
-                for index, chunk in enumerate(chunk_markdown(content)):
+                for index, chunk in enumerate(chunk_markdown(content, maximum_chunk_tokens, overlap_tokens)):
                     connection.execute(
                         "INSERT INTO rag_chunks(document_id,chunk_index,content,vector,token_count) VALUES (?,?,?,?,?)",
                         (document_id, index, chunk, json.dumps(vectorize(chunk)), len(tokens(chunk))),
@@ -146,7 +166,10 @@ def refresh_index(database: Path, roots: Iterable[Path] = DEFAULT_ROOTS) -> tupl
     return indexed, skipped, chunks_written
 
 
-def search(database: Path, query: str, limit: int = 5, minimum_score: float = 0.05) -> list[SearchResult]:
+def search(
+    database: Path, query: str, limit: int = 5, minimum_score: float = 0.05,
+    maximum_context_tokens: int = 1200,
+) -> list[SearchResult]:
     if not query.strip() or limit < 1:
         return []
     query_vector = vectorize(query)
@@ -162,7 +185,17 @@ def search(database: Path, query: str, limit: int = 5, minimum_score: float = 0.
         score = sum(left * right for left, right in zip(query_vector, stored))
         if score >= minimum_score:
             results.append(SearchResult(row["source_path"], row["chunk_index"], row["content"], score))
-    return sorted(results, key=lambda item: item.score, reverse=True)[:limit]
+    selected: list[SearchResult] = []
+    remaining = maximum_context_tokens
+    for item in sorted(results, key=lambda result: result.score, reverse=True):
+        if len(selected) >= limit or remaining <= 0:
+            break
+        content = truncate_tokens(item.content, remaining)
+        used = len(tokens(content))
+        if used:
+            selected.append(SearchResult(item.source_path, item.chunk_index, content, item.score))
+            remaining -= used
+    return selected
 
 
 def parse_args() -> argparse.Namespace:
@@ -171,6 +204,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--root", action="append", type=Path, dest="roots")
     parser.add_argument("--query")
     parser.add_argument("--limit", type=int, default=5)
+    parser.add_argument("--chunk-tokens", type=int, default=320)
+    parser.add_argument("--context-tokens", type=int, default=1200)
     return parser.parse_args()
 
 
@@ -178,10 +213,16 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     args = parse_args()
     try:
-        indexed, skipped, chunks = refresh_index(args.db, args.roots or DEFAULT_ROOTS)
+        indexed, skipped, chunks = refresh_index(
+            args.db, args.roots or DEFAULT_ROOTS,
+            maximum_chunk_tokens=args.chunk_tokens,
+        )
         LOGGER.info("RAG index ready: indexed=%s unchanged=%s chunks_written=%s", indexed, skipped, chunks)
         if args.query:
-            for position, result in enumerate(search(args.db, args.query, args.limit), 1):
+            for position, result in enumerate(search(
+                args.db, args.query, args.limit,
+                maximum_context_tokens=args.context_tokens,
+            ), 1):
                 print(f"{position}. score={result.score:.4f} source={result.source_path} chunk={result.chunk_index}")
                 print(result.content[:400].replace("\n", " "))
         return 0

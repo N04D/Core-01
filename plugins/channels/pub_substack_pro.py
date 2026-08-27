@@ -21,6 +21,10 @@ from uuid import uuid4
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from core.event_protocol import begin_submission, emit_result, update_publication
 from core.database import connect_database
+from core.browser_robustness import (
+    capture_sanitized_diagnostic, find_with_accessible_fallbacks,
+    verify_submission,
+)
 
 
 PLUGIN_NAME: Final = "Substack Pro Publisher & Analytics"
@@ -252,14 +256,10 @@ def browser_page(auth: Path, headless: bool) -> Iterator[Any]:
 
 
 def first_visible(page: Any, selectors: list[str]) -> Any:
-    for selector in selectors:
-        locator = page.locator(selector).first
-        try:
-            locator.wait_for(state="visible", timeout=7000)
-            return locator
-        except Exception:
-            continue
-    raise SubstackProError("expected control not found: " + " | ".join(selectors))
+    try:
+        return find_with_accessible_fallbacks(page, selectors, timeout=30000)
+    except LookupError as exc:
+        raise SubstackProError("expected Substack control not found") from exc
 
 
 def screenshot(page: Any, mode: str) -> Path | None:
@@ -267,8 +267,10 @@ def screenshot(page: Any, mode: str) -> Path | None:
         SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         path = SCREENSHOT_DIR / f"substack_pro_{mode}_{stamp}_{uuid4().hex[:6]}.png"
-        page.screenshot(path=str(path), full_page=True)
-        return path
+        artifacts = capture_sanitized_diagnostic(
+            page, SCREENSHOT_DIR, "substack_pro", mode
+        )
+        return Path(artifacts["screenshot"])
     except Exception:
         LOGGER.exception("Unable to save screenshot")
         return None
@@ -334,8 +336,13 @@ def finish_publication(
     )
     if not button.is_enabled():
         raise SubstackProError("publication control is disabled")
+    before_url = str(page.url)
     button.click()
-    return {"published": True, "dry_run": False, "media": media}
+    confirmed_url = verify_submission(
+        page, before_url,
+        indicators=("[role='status']", "[data-testid*='success']"),
+    )
+    return {"published": True, "dry_run": False, "media": media, "platform_url": confirmed_url}
 
 
 def text_or_empty(locator: Any) -> str:

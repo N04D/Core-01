@@ -29,7 +29,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.markdown_parser import MarkdownTemplateError, render_template  # noqa: E402
 from core.editorial_loop import EditorialLoopError, run_editorial_loop  # noqa: E402
-from core.rag_index import DEFAULT_ROOTS, refresh_index, search  # noqa: E402
+from core.rag_index import search  # noqa: E402
 
 
 PLUGIN_NAME: Final = "Lokale RTX 3090 Generator"
@@ -193,20 +193,13 @@ def process_event(connection: sqlite3.Connection, event_id: int, mock: bool) -> 
     payload = load_payload(connection, event_id)
     prompt = render_template(resolve_skill(payload), payload)
     database = Path(connection.execute("PRAGMA database_list").fetchone()[2]).resolve()
-    if os.getenv("RAG_AUTO_INDEX", "1").lower() in {"1", "true", "yes"}:
-        indexed, skipped, chunks = refresh_index(database, DEFAULT_ROOTS)
-        LOGGER.info(
-            "RAG refresh: indexed=%s unchanged=%s chunks=%s",
-            indexed,
-            skipped,
-            chunks,
-        )
     inputs = payload.get("inputs", {})
     topic = inputs.get("topic") if isinstance(inputs, dict) else None
     matches = search(
         database,
         str(topic or prompt),
         limit=int(os.getenv("RAG_CONTEXT_CHUNKS", "5")),
+        maximum_context_tokens=int(os.getenv("RAG_CONTEXT_TOKEN_BUDGET", "1200")),
     )
     context = "\n\n".join(
         f"[Bron: {Path(item.source_path).name}, chunk {item.chunk_index}, score {item.score:.3f}]\n{item.content}"

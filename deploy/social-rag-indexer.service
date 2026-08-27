@@ -1,0 +1,23 @@
+[Unit]
+Description=Social Engine Incremental RAG Indexer
+After=local-fs.target
+
+[Service]
+Type=simple
+User=infra
+Group=infra
+WorkingDirectory=/home/infra/dev
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/home/infra/dev/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-/home/infra/dev/.env
+ExecStart=/home/infra/dev/venv/bin/python3 /home/infra/dev/daemon/rag_indexer.py --db /home/infra/dev/db/events.db --root /home/infra/dev/vault --interval 30
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

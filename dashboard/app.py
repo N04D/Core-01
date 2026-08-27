@@ -303,6 +303,109 @@ def create_app(database_path: Path | None = None) -> Flask:
             }
         )
 
+    @app.get("/api/metrics")
+    def metrics() -> Any:
+        """Expose lightweight operational metrics without payload contents."""
+        with connect() as connection:
+            queue = {
+                row["status"]: row["count"]
+                for row in connection.execute(
+                    "SELECT status,COUNT(*) count FROM events_queue GROUP BY status"
+                )
+            }
+            ages = connection.execute(
+                """SELECT
+                    COALESCE(MAX(0, strftime('%s','now')-strftime('%s',MIN(CASE WHEN status='PENDING' THEN created_at END))),0) pending_oldest_seconds,
+                    COALESCE(MAX(0, strftime('%s','now')-strftime('%s',MIN(CASE WHEN status='PROCESSING' THEN created_at END))),0) processing_oldest_seconds
+                   FROM events_queue"""
+            ).fetchone()
+            leases = connection.execute(
+                """SELECT COUNT(*) active,
+                          SUM(CASE WHEN lease_until<=CURRENT_TIMESTAMP THEN 1 ELSE 0 END) expired
+                     FROM events_queue WHERE status='PROCESSING'"""
+            ).fetchone()
+            dlq = connection.execute("SELECT COUNT(*) FROM dead_letter_queue").fetchone()[0]
+            sessions = {
+                row["status"]: row["count"]
+                for row in connection.execute(
+                    "SELECT status,COUNT(*) count FROM session_health GROUP BY status"
+                )
+            }
+        return jsonify({
+            "queue": queue,
+            "queue_age_seconds": dict(ages),
+            "leases": {"active": leases["active"], "expired": leases["expired"] or 0},
+            "dead_letters": dlq,
+            "sessions": sessions,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+    @app.get("/api/dead-letters")
+    def dead_letters() -> Any:
+        event_type = request.args.get("event_type", "").strip()
+        query = request.args.get("q", "").strip()
+        try:
+            limit = min(200, max(1, int(request.args.get("limit", "50"))))
+        except ValueError:
+            abort(400, description="limit moet een geheel getal zijn")
+        where = ["(?='' OR dlq.event_type=?)", "(?='' OR dlq.reason_for_death LIKE '%'||?||'%' OR dlq.error_log LIKE '%'||?||'%')"]
+        parameters = (event_type, event_type, query, query, query, limit)
+        with connect() as connection:
+            rows = connection.execute(
+                f"""SELECT dlq.id,dlq.event_type,dlq.status,dlq.retry_count,
+                            dlq.error_log,dlq.reason_for_death,dlq.created_at,dlq.updated_at,
+                            COUNT(dr.id) redrive_count,MAX(dr.created_at) last_redrive_at
+                       FROM dead_letter_queue dlq
+                       LEFT JOIN dead_letter_redrives dr ON dr.dead_letter_id=dlq.id
+                      WHERE {' AND '.join(where)}
+                      GROUP BY dlq.id ORDER BY dlq.id DESC LIMIT ?""",
+                parameters,
+            ).fetchall()
+        return jsonify([dict(row) for row in rows])
+
+    @app.post("/api/dead-letters/<int:dead_letter_id>/redrive")
+    def redrive_dead_letter(dead_letter_id: int) -> Any:
+        body = request.get_json(silent=True) or {}
+        reason = str(body.get("reason", "Controlled dashboard redrive")).strip()[:1000]
+        requested_by = str(body.get("requested_by", "dashboard")).strip()[:120] or "dashboard"
+        with connect() as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                source = connection.execute(
+                    "SELECT event_type,payload FROM dead_letter_queue WHERE id=?",
+                    (dead_letter_id,),
+                ).fetchone()
+                if source is None:
+                    connection.rollback()
+                    abort(404, description="Dead-letter item niet gevonden")
+                payload = json.loads(source["payload"])
+                if not isinstance(payload, dict):
+                    raise ValueError("DLQ payload is geen JSON-object")
+                history = payload.get("redrive_history", [])
+                if not isinstance(history, list):
+                    history = []
+                payload["redrive_history"] = [
+                    *history,
+                    {"dead_letter_id": dead_letter_id, "requested_by": requested_by,
+                     "reason": reason, "at": datetime.now(timezone.utc).isoformat()},
+                ]
+                cursor = connection.execute(
+                    "INSERT INTO events_queue(event_type,payload) VALUES (?,?)",
+                    (source["event_type"], json.dumps(payload, ensure_ascii=False)),
+                )
+                new_event_id = int(cursor.lastrowid)
+                connection.execute(
+                    """INSERT INTO dead_letter_redrives(
+                           dead_letter_id,new_event_id,event_type,requested_by,reason
+                       ) VALUES (?,?,?,?,?)""",
+                    (dead_letter_id, new_event_id, source["event_type"], requested_by, reason),
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+        return jsonify({"dead_letter_id": dead_letter_id, "new_event_id": new_event_id, "status": "PENDING"}), 201
+
     @app.get("/api/session-health")
     def session_health() -> Any:
         with connect() as connection:

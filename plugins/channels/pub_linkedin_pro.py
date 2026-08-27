@@ -21,6 +21,10 @@ from uuid import uuid4
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from core.event_protocol import begin_submission, emit_result, update_publication
 from core.database import connect_database
+from core.browser_robustness import (
+    capture_sanitized_diagnostic, find_with_accessible_fallbacks,
+    verify_submission,
+)
 
 
 PLUGIN_NAME: Final = "LinkedIn Pro Publisher & Analytics"
@@ -177,14 +181,10 @@ def browser_page(auth: Path, headless: bool) -> Iterator[Any]:
 
 def first_visible(page: Any, selectors: list[str], timeout: int = 30000) -> Any:
     """Resolve the first visible selector from a resilient fallback set."""
-    for selector in selectors:
-        locator = page.locator(selector).first
-        try:
-            locator.wait_for(state="visible", timeout=max(1000, timeout // len(selectors)))
-            return locator
-        except Exception:
-            continue
-    raise LinkedInProError("expected LinkedIn control was not found: " + " | ".join(selectors))
+    try:
+        return find_with_accessible_fallbacks(page, selectors, timeout=timeout)
+    except LookupError as exc:
+        raise LinkedInProError("expected LinkedIn control was not found") from exc
 
 
 def capture_error(page: Any, operation: str) -> Path | None:
@@ -193,8 +193,10 @@ def capture_error(page: Any, operation: str) -> Path | None:
         SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         path = SCREENSHOT_DIR / f"linkedin_pro_{operation}_{stamp}_{uuid4().hex[:6]}.png"
-        page.screenshot(path=str(path), full_page=True)
-        return path
+        artifacts = capture_sanitized_diagnostic(
+            page, SCREENSHOT_DIR, "linkedin_pro", operation
+        )
+        return Path(artifacts["screenshot"])
     except Exception:
         LOGGER.exception("Unable to save diagnostic screenshot")
         return None
@@ -345,8 +347,13 @@ def publish_post(
     )
     if not button.is_enabled():
         raise LinkedInProError("publication button is disabled")
+    before_url = str(page.url)
     button.click()
-    return {"published": True, "dry_run": False, "media": media}
+    confirmed_url = verify_submission(
+        page, before_url,
+        indicators=("div[role='alert']", ".artdeco-toast-item"),
+    )
+    return {"published": True, "dry_run": False, "media": media, "platform_url": confirmed_url}
 
 
 def text_or_empty(locator: Any) -> str:
