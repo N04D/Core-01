@@ -51,6 +51,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--simulate", action="store_true", help="Explicit local test mode; never contacts NightCafe.")
     parser.add_argument("--claim-daily", action="store_true", help="Claim an available daily top-up in live mode.")
     parser.add_argument("--headless", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--cdp-url", default=os.getenv("NIGHTCAFE_CDP_URL"), help="Attach to a user-owned Chrome DevTools endpoint.")
+    parser.add_argument("--user-data-dir", type=Path, default=os.getenv("NIGHTCAFE_USER_DATA_DIR"), help="Open a user-owned persistent Chrome profile (headed).")
     parser.add_argument("--timeout", type=int, default=180_000)
     args = parser.parse_args()
     if args.event_id is not None and args.event_id < 1:
@@ -216,6 +218,11 @@ def browser_context_options() -> dict[str, object]:
     return options
 
 
+def has_external_session(args: argparse.Namespace) -> bool:
+    """Whether a user-owned browser session supplies the authentication state."""
+    return bool(args.cdp_url or args.user_data_dir or os.getenv("NIGHTCAFE_CDP_URL") or os.getenv("NIGHTCAFE_USER_DATA_DIR"))
+
+
 def write_mock(output: Path, metadata: dict[str, object]) -> Path:
     serialized = json.dumps(metadata, ensure_ascii=False, sort_keys=True).encode("utf-8")
     # PNG readers ignore trailing bytes; the digest remains unique per simulated daily asset.
@@ -229,9 +236,31 @@ def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
 
     trace_path: str | None = None
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=args.headless)
-        context = browser.new_context(storage_state=str(args.auth), **browser_context_options())
-        page = context.new_page()
+        browser = None
+        owns_browser = False
+        owns_context = False
+        cdp_url = args.cdp_url or os.getenv("NIGHTCAFE_CDP_URL")
+        profile_dir = args.user_data_dir or (Path(os.getenv("NIGHTCAFE_USER_DATA_DIR")) if os.getenv("NIGHTCAFE_USER_DATA_DIR") else None)
+        if cdp_url:
+            LOGGER.info("Attaching to user-owned Chrome over CDP: %s", cdp_url.split("?", 1)[0])
+            browser = playwright.chromium.connect_over_cdp(cdp_url)
+            context = browser.contexts[0] if browser.contexts else browser.new_context(**browser_context_options())
+            page = context.pages[0] if context.pages else context.new_page()
+        elif profile_dir:
+            profile_dir = Path(profile_dir).expanduser().resolve()
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            LOGGER.info("Opening user-owned persistent profile in headed mode: %s", profile_dir)
+            context = playwright.chromium.launch_persistent_context(
+                str(profile_dir), headless=False, **browser_context_options()
+            )
+            page = context.pages[0] if context.pages else context.new_page()
+            owns_context = True
+        else:
+            browser = playwright.chromium.launch(headless=args.headless)
+            context = browser.new_context(storage_state=str(args.auth), **browser_context_options())
+            page = context.new_page()
+            owns_browser = True
+            owns_context = True
         try:
             navigate_to_create_surface(page, args.timeout)
             if args.claim_daily:
@@ -295,8 +324,10 @@ def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
             trace_path = diagnostic["trace"]
             raise
         finally:
-            context.close()
-            browser.close()
+            if owns_context:
+                context.close()
+            if owns_browser and browser is not None:
+                browser.close()
 
 
 def main() -> int:
@@ -328,7 +359,8 @@ def main() -> int:
             write_mock(output, metadata)
             status = "SIMULATED"
         else:
-            validated_auth(args.auth)
+            if not has_external_session(args):
+                validated_auth(args.auth)
             if not args.live:
                 raise PermissionError("NightCafe live generation requires --live; use --simulate only for explicit tests")
             output, platform_url = run_live(args, output)

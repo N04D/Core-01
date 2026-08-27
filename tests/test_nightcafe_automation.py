@@ -12,7 +12,7 @@ from pathlib import Path
 from core.database import connect_database
 from core.setup_database import initialize_database
 from playbooks.nightcafe_99names import NAMES, seed_names, select_daily_name
-from plugins.media.nightcafe_automation import browser_context_options, navigate_to_create_surface, validated_auth
+from plugins.media.nightcafe_automation import browser_context_options, has_external_session, navigate_to_create_surface, validated_auth
 
 
 class _VisibleLocator:
@@ -167,6 +167,12 @@ class NightCafeWorkflowTests(unittest.TestCase):
                     os.environ.pop(key, None)
                 else:
                     os.environ[key] = value
+
+    def test_external_session_mode_is_explicitly_detected(self) -> None:
+        from argparse import Namespace
+        self.assertTrue(has_external_session(Namespace(cdp_url="http://127.0.0.1:9222", user_data_dir=None)))
+        self.assertTrue(has_external_session(Namespace(cdp_url=None, user_data_dir=Path(self.root / "profile"))))
+        self.assertFalse(has_external_session(Namespace(cdp_url=None, user_data_dir=None)))
 
 
 if __name__ == "__main__":
