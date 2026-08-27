@@ -82,6 +82,20 @@ class AgendaApiTest(unittest.TestCase):
             self.assertIn(marker, page)
         self.assertNotIn('id="flash"', page)
 
+    def test_dashboard_contains_responsive_navigation_shell(self) -> None:
+        page = self.client.get("/").get_data(as_text=True)
+        for marker in (
+            'class="app-shell flex overflow-hidden"',
+            'id="sidebar-backdrop"',
+            'id="open-sidebar"',
+            'id="close-sidebar"',
+            'aria-controls="sidebar"',
+            "function openMobileSidebar",
+            "function closeMobileSidebar",
+            "event.key==='Escape'",
+        ):
+            self.assertIn(marker, page)
+
 
 if __name__ == "__main__":
     unittest.main()
