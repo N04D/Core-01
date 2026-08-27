@@ -13,13 +13,24 @@ from pathlib import Path
 from typing import Any, Final
 from uuid import uuid4
 
-from flask import Flask, abort, jsonify, render_template, request
+from flask import Flask, abort, jsonify, render_template, request, send_file
+from werkzeug.utils import secure_filename
 
 
 PROJECT_ROOT: Final = Path(__file__).resolve().parent.parent
 DEFAULT_DATABASE: Final = PROJECT_ROOT / "db" / "events.db"
 VAULT_ROOT: Final = PROJECT_ROOT / "vault"
 EDITABLE_AREAS: Final = {"concepten", "uitgaand"}
+MEDIA_EXTENSIONS: Final = {
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".png": "image",
+    ".gif": "image",
+    ".webp": "image",
+    ".mp4": "video",
+    ".webm": "video",
+    ".mov": "video",
+}
 PLUGIN_ANALYTICS: Final = {
     "LinkedIn Pro Publisher & Analytics": ("linkedin_analytics_*.json",),
     "LinkedIn Publisher (Productie)": ("linkedin_analytics_*.json",),
@@ -61,7 +72,9 @@ def create_app(database_path: Path | None = None) -> Flask:
         .expanduser()
         .resolve()
     )
-    app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
+    app.config["MAX_CONTENT_LENGTH"] = int(
+        os.getenv("DASHBOARD_MAX_UPLOAD_BYTES", str(100 * 1024 * 1024))
+    )
 
     def connect() -> sqlite3.Connection:
         connection = sqlite3.connect(app.config["DATABASE"], timeout=10.0)
@@ -93,6 +106,46 @@ def create_app(database_path: Path | None = None) -> Flask:
                 stat_result.st_mtime, tz=timezone.utc
             ).isoformat(),
         }
+
+    def safe_media_path(relative_path: str, *, must_exist: bool = True) -> Path:
+        root = (VAULT_ROOT / "media").resolve()
+        candidate = (root / relative_path).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            abort(400, description="Ongeldig mediapad")
+        if candidate.suffix.lower() not in MEDIA_EXTENSIONS:
+            abort(400, description="Niet-ondersteund mediaformaat")
+        if must_exist and not candidate.is_file():
+            abort(404, description="Mediabestand niet gevonden")
+        return candidate
+
+    def media_record(path: Path) -> dict[str, Any]:
+        record = artifact_record(path)
+        record.update(
+            {
+                "relative_path": str(path.relative_to(VAULT_ROOT / "media")),
+                "content_type": MEDIA_EXTENSIONS[path.suffix.lower()],
+                "url": f"/api/media/{path.relative_to(VAULT_ROOT / 'media').as_posix()}",
+            }
+        )
+        return record
+
+    def payload_media(payload: dict[str, Any]) -> dict[str, Any] | None:
+        raw = payload.get("media_path") or payload.get("image_path") or payload.get("video_path")
+        if not isinstance(raw, str) or not raw:
+            return None
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = PROJECT_ROOT / candidate
+        try:
+            candidate = candidate.resolve()
+            candidate.relative_to((VAULT_ROOT / "media").resolve())
+        except (OSError, ValueError):
+            return None
+        if not candidate.is_file() or candidate.suffix.lower() not in MEDIA_EXTENSIONS:
+            return None
+        return media_record(candidate)
 
     def active_plugin(connection: sqlite3.Connection, plugin_name: str) -> sqlite3.Row:
         row = connection.execute(
@@ -212,17 +265,98 @@ def create_app(database_path: Path | None = None) -> Flask:
                 record["payload"] = json.loads(record["payload"])
             except json.JSONDecodeError:
                 record["payload"] = {}
+            record["media"] = payload_media(record["payload"])
             records.append(record)
         return jsonify(records)
+
+    @app.get("/api/planning-feed")
+    def planning_feed() -> Any:
+        """Return filterable draft, schedule, publication, and error records."""
+        records: list[dict[str, Any]] = []
+        concept_root = VAULT_ROOT / "concepten"
+        for path in sorted(concept_root.glob("*.md"), key=lambda item: item.stat().st_mtime, reverse=True):
+            item = artifact_record(path)
+            item.update({"kind": "draft", "status_group": "DRAFT", "channel": None, "content_type": "text"})
+            records.append(item)
+        with connect() as connection:
+            schedules = connection.execute(
+                "SELECT id,event_type,payload,scheduled_time,status FROM scheduled_events ORDER BY scheduled_time DESC LIMIT 250"
+            ).fetchall()
+            failures = connection.execute(
+                """SELECT id,event_type,payload,updated_at,error_log FROM events_queue
+                    WHERE status='FAILED' ORDER BY id DESC LIMIT 100"""
+            ).fetchall()
+        for row in schedules:
+            try:
+                payload = json.loads(row["payload"])
+            except json.JSONDecodeError:
+                payload = {}
+            media = payload_media(payload)
+            records.append(
+                {
+                    "id": row["id"], "kind": "schedule", "channel": row["event_type"],
+                    "status_group": "ERROR" if row["status"] in {"FAILED", "CANCELLED"} else "SCHEDULED",
+                    "status": row["status"], "timestamp": row["scheduled_time"], "payload": payload,
+                    "content_type": media["content_type"] if media else payload.get("content_type", "text"), "media": media,
+                }
+            )
+        publication_root = VAULT_ROOT / "gepubliceerd"
+        for path in sorted(publication_root.glob("*.md"), key=lambda item: item.stat().st_mtime, reverse=True):
+            item = artifact_record(path)
+            item.update({"kind": "publication", "status_group": "PUBLISHED", "channel": None, "content_type": "text"})
+            records.append(item)
+        for row in failures:
+            try:
+                payload = json.loads(row["payload"])
+            except json.JSONDecodeError:
+                payload = {}
+            media = payload_media(payload)
+            records.append(
+                {"id": row["id"], "kind": "event", "channel": row["event_type"], "status_group": "ERROR",
+                 "status": "FAILED", "timestamp": row["updated_at"], "error_log": row["error_log"],
+                 "payload": payload, "content_type": media["content_type"] if media else payload.get("content_type", "text"), "media": media}
+            )
+        return jsonify(records)
+
+    @app.get("/api/media")
+    def media_library() -> Any:
+        root = VAULT_ROOT / "media"
+        root.mkdir(parents=True, exist_ok=True)
+        paths = [path for path in root.rglob("*") if path.is_file() and path.suffix.lower() in MEDIA_EXTENSIONS]
+        return jsonify([media_record(path) for path in sorted(paths, key=lambda item: item.stat().st_mtime, reverse=True)])
+
+    @app.post("/api/media")
+    def upload_media() -> Any:
+        upload = request.files.get("file")
+        if upload is None or not upload.filename:
+            abort(400, description="Selecteer een mediabestand")
+        filename = secure_filename(upload.filename)
+        suffix = Path(filename).suffix.lower()
+        if suffix not in MEDIA_EXTENSIONS:
+            abort(400, description="Alleen JPG, PNG, GIF, WebP, MP4, WebM en MOV zijn toegestaan")
+        root = VAULT_ROOT / "media"
+        root.mkdir(parents=True, exist_ok=True)
+        destination = root / f"{Path(filename).stem}_{uuid4().hex[:10]}{suffix}"
+        upload.save(destination)
+        return jsonify(media_record(destination)), 201
+
+    @app.get("/api/media/<path:relative_path>")
+    def serve_media(relative_path: str) -> Any:
+        return send_file(safe_media_path(relative_path), conditional=True)
 
     @app.post("/api/scheduled-events")
     def create_scheduled_event() -> Any:
         body = request.get_json(silent=True) or {}
-        event_type = body.get("event_type")
+        event_types = body.get("event_types")
+        if event_types is None and isinstance(body.get("event_type"), str):
+            event_types = [body["event_type"]]
         scheduled_time = body.get("scheduled_time")
         draft_path = body.get("draft_file")
-        if not all(isinstance(value, str) and value.strip() for value in (event_type, scheduled_time, draft_path)):
-            abort(400, description="event_type, scheduled_time en draft_file zijn verplicht")
+        if not isinstance(event_types, list) or not event_types or not all(isinstance(value, str) and value.strip() for value in event_types):
+            abort(400, description="event_types moet een niet-lege lijst zijn")
+        event_types = list(dict.fromkeys(event_types))
+        if not all(isinstance(value, str) and value.strip() for value in (scheduled_time, draft_path)):
+            abort(400, description="scheduled_time en draft_file zijn verplicht")
         try:
             parsed_time = datetime.fromisoformat(scheduled_time.replace("Z", "+00:00"))
         except ValueError:
@@ -233,25 +367,41 @@ def create_app(database_path: Path | None = None) -> Flask:
         if not draft.is_file():
             abort(404, description="Draft niet gevonden")
         canonical_time = parsed_time.astimezone(timezone.utc).isoformat(timespec="seconds")
+        media_path = body.get("media_path")
+        media: Path | None = None
+        content_type = "text"
+        if media_path:
+            if not isinstance(media_path, str):
+                abort(400, description="media_path moet tekst zijn")
+            media = safe_media_path(media_path)
+            content_type = MEDIA_EXTENSIONS[media.suffix.lower()]
+        schedule_ids: list[int] = []
         with connect() as connection:
-            route = connection.execute(
-                """SELECT 1 FROM event_routes er JOIN plugin_registry pr
-                     ON pr.plugin_name=er.target_plugin_name
-                    WHERE er.event_type=? AND pr.is_active=1""",
-                (event_type,),
-            ).fetchone()
-            if route is None:
-                abort(409, description=f"Geen actieve route voor {event_type}")
-            payload = json.dumps(
-                {"draft_file": str(draft), "source": "dashboard_scheduler"},
-                ensure_ascii=False,
-            )
-            cursor = connection.execute(
-                "INSERT INTO scheduled_events(event_type,payload,scheduled_time) VALUES (?,?,?)",
-                (event_type, payload, canonical_time),
-            )
+            for event_type in event_types:
+                route = connection.execute(
+                    """SELECT 1 FROM event_routes er JOIN plugin_registry pr
+                         ON pr.plugin_name=er.target_plugin_name
+                        WHERE er.event_type=? AND pr.is_active=1""",
+                    (event_type,),
+                ).fetchone()
+                if route is None:
+                    abort(409, description=f"Geen actieve route voor {event_type}")
+            for event_type in event_types:
+                payload_data = {
+                    "draft_file": str(draft),
+                    "source": "dashboard_scheduler",
+                    "content_type": content_type,
+                }
+                if media:
+                    payload_data["media_path"] = str(media)
+                    payload_data["image_path" if content_type == "image" else "video_path"] = str(media)
+                cursor = connection.execute(
+                    "INSERT INTO scheduled_events(event_type,payload,scheduled_time) VALUES (?,?,?)",
+                    (event_type, json.dumps(payload_data, ensure_ascii=False), canonical_time),
+                )
+                schedule_ids.append(int(cursor.lastrowid))
             connection.commit()
-        return jsonify({"id": int(cursor.lastrowid), "status": "PENDING", "scheduled_time": canonical_time}), 201
+        return jsonify({"ids": schedule_ids, "status": "PENDING", "scheduled_time": canonical_time}), 201
 
     @app.delete("/api/scheduled-events/<int:schedule_id>")
     def cancel_scheduled_event(schedule_id: int) -> Any:
