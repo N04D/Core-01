@@ -281,6 +281,16 @@ def browser_context_options() -> dict[str, object]:
     return options
 
 
+def browser_launch_args() -> list[str]:
+    """Return managed-browser flags needed on restricted Linux hosts.
+
+    Chromium's sandbox remains enabled by default.  Set NIGHTCAFE_NO_SANDBOX=1
+    only for containers/hosts where the kernel denies the sandbox namespace.
+    """
+    value = os.getenv("NIGHTCAFE_NO_SANDBOX", "0").strip().casefold()
+    return ["--no-sandbox"] if value in {"1", "true", "yes", "on"} else []
+
+
 def has_external_session(args: argparse.Namespace) -> bool:
     """Whether a user-owned browser session supplies the authentication state."""
     return bool(args.cdp_url or args.user_data_dir or os.getenv("NIGHTCAFE_CDP_URL") or os.getenv("NIGHTCAFE_USER_DATA_DIR"))
@@ -327,7 +337,7 @@ def managed_context_options(auth_path: Path) -> dict[str, object]:
 
 def launch_managed_context(playwright: object, args: argparse.Namespace) -> tuple[object, object]:
     """Launch a controlled Chromium and load the existing NightCafe session."""
-    browser = playwright.chromium.launch(headless=args.headless)
+    browser = playwright.chromium.launch(headless=args.headless, args=browser_launch_args())
     try:
         context = browser.new_context(**managed_context_options(args.auth))
     except Exception:

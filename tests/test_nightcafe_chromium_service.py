@@ -21,6 +21,7 @@ class NightCafeChromiumServiceTests(unittest.TestCase):
         launcher = (ROOT / "scripts/start_nightcafe_chromium.sh").read_text(encoding="utf-8")
         self.assertIn("--enable-gpu", launcher)
         self.assertIn("--headless=new", launcher)
+        self.assertIn("NIGHTCAFE_NO_SANDBOX", launcher)
 
     def test_scripts_are_executable_and_health_endpoint_is_local(self) -> None:
         for path in (ROOT / "scripts/start_nightcafe_chromium.sh", ROOT / "scripts/check_nightcafe_chromium.sh", ROOT / "deploy/install_nightcafe_chromium_user.sh"):
