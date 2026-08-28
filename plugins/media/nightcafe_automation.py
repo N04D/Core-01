@@ -56,6 +56,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--user-data-dir", type=Path, default=os.getenv("NIGHTCAFE_USER_DATA_DIR"), help="Open a user-owned persistent Chrome profile (headed).")
     parser.add_argument("--cdp-wait-seconds", type=float, default=15.0, help="Seconds to wait for a user-owned CDP endpoint before fallback.")
     parser.add_argument("--timeout", type=int, default=180_000)
+    parser.add_argument("--generation-timeout", type=int, default=300_000)
     args = parser.parse_args()
     if args.event_id is not None and args.event_id < 1:
         parser.error("event_id must be positive")
@@ -322,6 +323,40 @@ def write_mock(output: Path, metadata: dict[str, object]) -> Path:
     return output
 
 
+def validate_image_file(path: Path) -> None:
+    """Reject empty/placeholder downloads before they enter the Media Store."""
+    if not path.is_file() or path.stat().st_size < 256:
+        raise RuntimeError(f"generated image is empty or too small: {path}")
+    header = path.read_bytes()[:16]
+    suffix = path.suffix.casefold()
+    signatures = {
+        ".png": (b"\x89PNG\r\n\x1a\n",), ".jpg": (b"\xff\xd8\xff",),
+        ".jpeg": (b"\xff\xd8\xff",), ".webp": (b"RIFF",),
+    }
+    if suffix not in signatures or not any(header.startswith(item) for item in signatures[suffix]):
+        raise RuntimeError(f"generated image failed format validation: {path}")
+    try:
+        from PIL import Image
+        with Image.open(path) as image:
+            image.verify()
+        with Image.open(path) as image:
+            if image.width < 32 or image.height < 32:
+                raise RuntimeError(f"generated image is only {image.width}x{image.height}: {path}")
+    except ImportError:
+        LOGGER.debug("Pillow unavailable; magic-byte validation used for %s", path)
+
+
+def wait_for_rendered_result(page: object, timeout: int) -> None:
+    """Wait until a result image is decoded at a useful resolution, not a placeholder."""
+    selector = "main img[src*='nightcafe'], main img[src*='r2.'], main img[alt*='creation' i]"
+    page.wait_for_function(
+        """selector => Array.from(document.querySelectorAll(selector)).some(img =>
+            img.complete && img.naturalWidth >= 32 && img.naturalHeight >= 32)""",
+        selector,
+        timeout=timeout,
+    )
+
+
 def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
     from playwright.sync_api import sync_playwright
 
@@ -356,6 +391,7 @@ def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
             else:
                 context = browser.contexts[0] if browser.contexts else browser.new_context(**browser_context_options())
                 page = context.pages[0] if context.pages else context.new_page()
+            LOGGER.info("Browser context ready: cdp=%s pages=%d url=%s", bool(cdp_url and browser), len(context.pages), str(getattr(page, "url", "")))
         elif profile_dir:
             profile_dir = Path(profile_dir).expanduser().resolve()
             profile_dir.mkdir(parents=True, exist_ok=True)
@@ -365,11 +401,13 @@ def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
             )
             page = context.pages[0] if context.pages else context.new_page()
             owns_context = True
+            LOGGER.info("Persistent browser context ready: pages=%d url=%s", len(context.pages), str(getattr(page, "url", "")))
         else:
             browser, context = launch_managed_context(playwright, args)
             page = context.new_page()
             owns_browser = True
             owns_context = True
+            LOGGER.info("Managed storage-state context ready: pages=%d url=%s", len(context.pages), str(getattr(page, "url", "")))
         try:
             navigate_to_create_surface(page, args.timeout)
             if args.claim_daily:
@@ -385,15 +423,20 @@ def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
                     LOGGER.info("No claimable daily top-up was visible")
                 navigate_to_create_surface(page, args.timeout)
             prompt_box = find_prompt_input(page, timeout=15_000)
+            LOGGER.info("Prompt input located; filling prompt (%d characters)", len(args.prompt))
             prompt_box.fill(args.prompt)
+            LOGGER.info("Prompt input filled; resolving Create/Generate control")
             find_control(
                 page,
                 roles=(("button", re.compile(r"create|generate", re.I)),),
                 css=("main button[type='submit']",),
                 timeout=15_000,
             ).click()
+            LOGGER.info("Create/Generate clicked; waiting up to %d ms for rendered result", args.generation_timeout)
             result = page.locator("main img[src*='nightcafe'], main img[src*='r2.'], main img[alt*='creation' i]").last
-            result.wait_for(state="visible", timeout=args.timeout)
+            result.wait_for(state="visible", timeout=args.generation_timeout)
+            wait_for_rendered_result(page, args.generation_timeout)
+            LOGGER.info("Rendered result image detected with usable dimensions")
             source = result.get_attribute("src")
             if not source:
                 raise RuntimeError("NightCafe result image has no downloadable source URL")
@@ -410,6 +453,8 @@ def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
                 if suffix in {".png", ".jpg", ".jpeg", ".webp"}:
                     output = output.with_suffix(suffix)
                 download.save_as(str(output))
+                validate_image_file(output)
+                LOGGER.info("Downloaded and validated image: %s (%d bytes)", output, output.stat().st_size)
                 return output, source
             except Exception:
                 LOGGER.info("Download control unavailable; using authenticated image response")
@@ -421,6 +466,8 @@ def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
             if suffix:
                 output = output.with_suffix(suffix)
             output.write_bytes(response.body())
+            validate_image_file(output)
+            LOGGER.info("Fetched and validated image response: %s (%d bytes)", output, output.stat().st_size)
             return output, source
         except Exception:
             trace = capture_page_trace(
