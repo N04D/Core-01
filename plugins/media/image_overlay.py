@@ -5,9 +5,18 @@ from __future__ import annotations
 
 import argparse
 import os
+import hashlib
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
+
+if __package__ in {None, ""}:
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from core.database import connect_database
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_DIR = ROOT / "vault" / "media" / "nightcafe"
@@ -59,10 +68,30 @@ def apply_overlay(input_path: Path, output_path: Path, *, text: str = "", border
     return output_path
 
 
+def register_overlay(db_path: Path, path: Path, text: str) -> int:
+    """Register the finalized asset so dashboard Media Store can find it."""
+    with connect_database(db_path) as db:
+        db.execute("""INSERT INTO media_sources(source_key,display_name,provider,root_path,config,is_active,last_indexed_at)
+                      VALUES (?,?,?,?,?,1,CURRENT_TIMESTAMP)
+                      ON CONFLICT(source_key) DO UPDATE SET root_path=excluded.root_path,is_active=1,last_indexed_at=CURRENT_TIMESTAMP""",
+                    ("vault-overlays", "Vault Image Overlays", "image_overlay", str(path.parent), "{}"))
+        source_id = int(db.execute("SELECT id FROM media_sources WHERE source_key='vault-overlays'").fetchone()[0])
+        external_id = hashlib.sha256(path.read_bytes()).hexdigest()
+        db.execute("""INSERT INTO media_assets(source_id,external_id,filename,file_path,thumbnail_path,media_type,mime_type,file_size,modified_at,prompt,metadata,is_available,indexed_at)
+                      VALUES (?,?,?,?,?,'image','image/jpeg',?,?,?,?,1,CURRENT_TIMESTAMP)
+                      ON CONFLICT(source_id,external_id) DO UPDATE SET file_path=excluded.file_path,file_size=excluded.file_size,modified_at=excluded.modified_at,metadata=excluded.metadata,is_available=1,indexed_at=CURRENT_TIMESTAMP""",
+                   (source_id, external_id, path.name, str(path), str(path), path.stat().st_size,
+                    datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat(), text,
+                    json.dumps({"overlay": True, "caption": text}, ensure_ascii=False)))
+        db.commit()
+        return int(db.execute("SELECT id FROM media_assets WHERE source_id=? AND external_id=?", (source_id, external_id)).fetchone()[0])
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, help="Source image; defaults to the newest NightCafe image.")
     parser.add_argument("--output", type=Path, default=PUBLICATION_DIR / "nightcafe_overlay.jpg")
+    parser.add_argument("--db", type=Path, help="Optional SQLite database for Media Store registration.")
     parser.add_argument("--text", default="", help="Caption/title, e.g. an artwork name or one of the 99 names.")
     parser.add_argument("--border", type=int, default=24)
     parser.add_argument("--font-size", type=int, default=34)
@@ -77,7 +106,10 @@ def main() -> int:
     output = apply_overlay(source, args.output, text=args.text, border=args.border,
                            font_size=args.font_size, border_color=args.border_color,
                            text_color=args.text_color)
-    print(output)
+    result = {"status": "COMPLETED", "output": str(output)}
+    if args.db:
+        result["asset_id"] = register_overlay(args.db.expanduser().resolve(), output, args.text)
+    print(json.dumps(result, ensure_ascii=False))
     return 0
 
 
