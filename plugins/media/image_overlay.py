@@ -56,19 +56,13 @@ def apply_overlay(input_path: Path, output_path: Path, *, text: str = "", border
         draw = ImageDraw.Draw(image, "RGBA")
         font = _font(font_size)
         bbox = draw.textbbox((0, 0), text.strip(), font=font)
-        band_height = (bbox[3] - bbox[1]) + max(28, font_size)
-        top = image.height - band_height - border // 2
-        # A restrained navy-to-transparent gradient keeps the artwork visible.
-        for y in range(max(0, top), image.height):
-            progress = (y - top) / max(1, image.height - top)
-            alpha = int(18 + 105 * progress)
-            draw.line((0, y, image.width, y), fill=(10, 18, 35, alpha))
-        accent_y = max(0, top - 5)
-        draw.line((border, accent_y, image.width - border, accent_y), fill=(183, 155, 104, 210), width=2)
-        text_y = top + (band_height - (bbox[3] - bbox[1])) // 2 - bbox[1]
-        # Subtle shadow improves legibility without a heavy box.
-        draw.text((border + 13, text_y + 2), text.strip(), font=font, fill=(0, 0, 0, 130))
-        draw.text((border + 12, text_y), text.strip(), font=font, fill=text_color)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+        text_x = (image.width - text_width) // 2 - bbox[0]
+        text_y = (image.height - text_height) // 2 - bbox[1]
+        # Centered title: no opaque banner, only a restrained shadow for contrast.
+        draw.text((text_x + 3, text_y + 3), text.strip(), font=font, fill=(0, 0, 0, 150))
+        draw.text((text_x, text_y), text.strip(), font=font, fill=text_color)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if output_path.suffix.lower() in {".jpg", ".jpeg"}:
         image.convert("RGB").save(output_path, quality=95)
@@ -103,7 +97,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--db", type=Path, help="Optional SQLite database for Media Store registration.")
     parser.add_argument("--text", default="", help="Caption/title, e.g. an artwork name or one of the 99 names.")
     parser.add_argument("--border", type=int, default=24)
-    parser.add_argument("--font-size", type=int, default=34)
+    parser.add_argument("--font-size", type=int, default=64)
     parser.add_argument("--border-color", default="#b79b68")
     parser.add_argument("--text-color", default="#f7f2e8")
     return parser.parse_args()
