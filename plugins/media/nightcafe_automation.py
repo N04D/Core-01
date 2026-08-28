@@ -519,10 +519,40 @@ def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
             if not source:
                 raise RuntimeError("NightCafe result image has no downloadable source URL")
             try:
+                LOGGER.info("Opening rendered thumbnail in detail view")
+                try:
+                    result.click(timeout=10_000)
+                except Exception:
+                    result.click(force=True, timeout=10_000)
+                # Allow the detail route/modal to mount before resolving controls.
+                page.wait_for_timeout(750)
+                detail_scope = page
+                try:
+                    dialogs = page.locator("[role='dialog'], [aria-modal='true'], [data-testid*='modal' i]")
+                    if dialogs.count():
+                        detail_scope = dialogs.last
+                except Exception:
+                    pass
+                LOGGER.info("Detail view opened; resolving download/options control")
+                try:
+                    options_control = find_control(
+                        detail_scope,
+                        roles=(("button", re.compile(r"^(?:more|options|actions?)$", re.I)),),
+                        labels=(re.compile(r"more|options|download", re.I),),
+                        css=("button[aria-label*='more' i]", "button[aria-label*='option' i]"),
+                        timeout=3_000,
+                    )
+                    options_control.click()
+                    LOGGER.info("Detail options opened")
+                except Exception:
+                    LOGGER.debug("No extra detail options menu required")
                 download_button = find_control(
-                    page,
-                    roles=(("button", re.compile(r"download", re.I)), ("link", re.compile(r"download", re.I))),
-                    timeout=4_000,
+                    detail_scope,
+                    roles=(("button", re.compile(r"^download(?:\s+(?:image|full(?:\s+size)?|original))?$", re.I)),
+                           ("link", re.compile(r"^download(?:\s+(?:image|full(?:\s+size)?|original))?$", re.I))),
+                    labels=(re.compile(r"download(?:\s+image|\s+full(?:\s+size)?|\s+original)?", re.I),),
+                    css=("a[download]", "button[aria-label*='download' i]", "[data-testid*='download' i]"),
+                    timeout=10_000,
                 )
                 with page.expect_download(timeout=15_000) as download_info:
                     download_button.click()
