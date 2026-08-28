@@ -201,6 +201,42 @@ def dismiss_overlays(page: object, timeout: int = 2_000) -> int:
     return dismissed
 
 
+def clear_blocking_overlays(page: object) -> int:
+    """Clear modal/onboarding/consent layers before a generation click.
+
+    The creator occasionally mounts an empty ``#modals`` host that still
+    intercepts pointer events.  Try the user-visible Escape/close paths first,
+    then hide only known blocking containers as a final, scoped fallback.
+    """
+    dismissed = dismiss_overlays(page)
+    for _ in range(2):
+        try:
+            page.keyboard.press("Escape")
+            dismissed += 1
+        except Exception:
+            break
+    selectors = [
+        "#modals", "[role='dialog'][aria-modal='true']", "[aria-modal='true']",
+        "[data-testid*='modal' i]", "[data-testid*='onboarding' i]",
+        "[id*='onboarding' i]", "[class*='onboarding' i]",
+        "[id*='cookie' i]", "[class*='cookie' i]",
+    ]
+    try:
+        page.evaluate(
+            """selectors => selectors.forEach(selector => document.querySelectorAll(selector).forEach(node => {
+                if (node instanceof HTMLElement) {
+                    node.setAttribute('aria-hidden', 'true');
+                    node.style.setProperty('pointer-events', 'none', 'important');
+                    node.style.setProperty('display', 'none', 'important');
+                }
+            }))""",
+            selectors,
+        )
+    except Exception:
+        pass
+    return dismissed
+
+
 def click_with_overlay_fallback(control: object) -> None:
     """Escalate a click only on the already-selected Create control."""
     try:
@@ -457,12 +493,15 @@ def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
             LOGGER.info("Prompt input located; filling prompt (%d characters)", len(args.prompt))
             prompt_box.fill(args.prompt)
             LOGGER.info("Prompt input filled; resolving Create/Generate control")
-            find_control(
+            create_control = find_control(
                 page,
                 roles=(("button", re.compile(r"create|generate", re.I)),),
                 css=("main button[type='submit']",),
                 timeout=15_000,
-            ).click()
+            )
+            clear_blocking_overlays(page)
+            LOGGER.info("Blocking overlays cleared; clicking Create/Generate")
+            click_with_overlay_fallback(create_control)
             LOGGER.info("Create/Generate clicked; waiting up to %d ms for rendered result", args.generation_timeout)
             result = page.locator("main img[src*='nightcafe'], main img[src*='r2.'], main img[alt*='creation' i]").last
             result.wait_for(state="visible", timeout=args.generation_timeout)
