@@ -868,32 +868,7 @@ def create_app(database_path: Path | None = None) -> Flask:
         """Return settings only for an active plugin."""
         with connect() as connection:
             plugin = active_plugin(connection, plugin_name)
-        response = {"plugin": dict(plugin), "auth": auth_status(plugin_name)}
-        if plugin_name == "Image Overlay Processor":
-            response["overlay"] = {"title_size": 64, "subtitle_size": 38, "meaning_size": 30,
-                                    "position": "center", "border": 24}
-        return jsonify(response)
-
-    @app.post("/api/plugins/<path:plugin_name>/overlay")
-    def apply_plugin_overlay(plugin_name: str) -> Any:
-        if plugin_name != "Image Overlay Processor":
-            abort(404, description="Overlay-instellingen niet beschikbaar voor deze plugin")
-        with connect() as connection:
-            active_plugin(connection, plugin_name)
-        body = request.get_json(silent=True) or {}
-        relative = body.get("input")
-        source = safe_media_path(relative) if isinstance(relative, str) else None
-        if source is None and isinstance(body.get("asset_id"), int):
-            with connect() as connection:
-                source = Path(indexed_asset(connection, int(body["asset_id"]))["file_path"]).resolve()
-        if source is None:
-            abort(400, description="input mediapad is verplicht")
-        from plugins.media.image_overlay import apply_overlay
-        title, phonetic, meaning = (str(body.get(key, "")).strip() for key in ("title", "phonetic", "meaning"))
-        lines = "\n".join(value for value in (title, phonetic, meaning) if value)
-        output = (VAULT_ROOT / "media" / "published" / f"{source.stem}_overlay.jpg").resolve()
-        apply_overlay(source, output, text=lines, border=int(body.get("border", 24)), font_size=int(body.get("title_size", 64)))
-        return jsonify({"status": "COMPLETED", "output": str(output)})
+        return jsonify({"plugin": dict(plugin), "auth": auth_status(plugin_name)})
 
     @app.post("/api/plugins/<path:plugin_name>/authenticate")
     def authenticate_plugin(plugin_name: str) -> Any:
