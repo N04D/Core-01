@@ -219,11 +219,17 @@ def click_with_overlay_fallback(control: object) -> None:
         raise RuntimeError(f"Create action remained blocked by an overlay: {js_error}") from js_error
 
 
-def navigate_to_create_surface(page: object, timeout: int) -> None:
+def navigate_to_create_surface(page: object, timeout: int, *, reuse_existing: bool = False) -> None:
     """Open the creator from the authenticated overview before locating its prompt field."""
     home_url = os.getenv("NIGHTCAFE_HOME_URL", "https://creator.nightcafe.studio/")
     create_url = os.getenv("NIGHTCAFE_CREATE_URL", "https://creator.nightcafe.studio/create")
-    page.goto(home_url, wait_until="domcontentloaded", timeout=timeout)
+    current_url = str(getattr(page, "url", ""))
+    if reuse_existing and current_url.startswith("about:blank"):
+        raise RuntimeError("CDP session has no active NightCafe page; open NightCafe in the attached browser first")
+    if not (reuse_existing and "nightcafe" in current_url.casefold()):
+        page.goto(home_url, wait_until="domcontentloaded", timeout=timeout)
+    else:
+        LOGGER.info("Reusing active NightCafe page without navigating from about:blank: %s", current_url.split("?", 1)[0])
     try:
         title = str(page.title())
         body = str(page.locator("body").inner_text(timeout=2_000))
@@ -278,6 +284,15 @@ def browser_context_options() -> dict[str, object]:
 def has_external_session(args: argparse.Namespace) -> bool:
     """Whether a user-owned browser session supplies the authentication state."""
     return bool(args.cdp_url or args.user_data_dir or os.getenv("NIGHTCAFE_CDP_URL") or os.getenv("NIGHTCAFE_USER_DATA_DIR"))
+
+
+def select_cdp_page(context: object) -> object:
+    """Select an existing NightCafe tab; never create a blank page for CDP mode."""
+    pages = list(getattr(context, "pages", ()))
+    nightcafe_pages = [page for page in pages if "nightcafe" in str(getattr(page, "url", "")).casefold()]
+    if nightcafe_pages:
+        return nightcafe_pages[0]
+    raise RuntimeError("CDP connected, but no existing NightCafe tab was found; open NightCafe in Chrome first")
 
 
 def connect_cdp_with_retry(chromium: object, cdp_url: str, wait_seconds: float) -> object:
@@ -390,7 +405,7 @@ def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
                     owns_context = True
             else:
                 context = browser.contexts[0] if browser.contexts else browser.new_context(**browser_context_options())
-                page = context.pages[0] if context.pages else context.new_page()
+                page = select_cdp_page(context)
             LOGGER.info("Browser context ready: cdp=%s pages=%d url=%s", bool(cdp_url and browser), len(context.pages), str(getattr(page, "url", "")))
         elif profile_dir:
             profile_dir = Path(profile_dir).expanduser().resolve()
@@ -409,7 +424,7 @@ def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
             owns_context = True
             LOGGER.info("Managed storage-state context ready: pages=%d url=%s", len(context.pages), str(getattr(page, "url", "")))
         try:
-            navigate_to_create_surface(page, args.timeout)
+            navigate_to_create_surface(page, args.timeout, reuse_existing=bool(cdp_url and browser and not owns_browser))
             if args.claim_daily:
                 page.goto("https://creator.nightcafe.studio/notifications", wait_until="domcontentloaded", timeout=args.timeout)
                 try:
@@ -421,7 +436,7 @@ def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
                     LOGGER.info("Daily credit top-up claim submitted")
                 except Exception:
                     LOGGER.info("No claimable daily top-up was visible")
-                navigate_to_create_surface(page, args.timeout)
+                navigate_to_create_surface(page, args.timeout, reuse_existing=bool(cdp_url and browser and not owns_browser))
             prompt_box = find_prompt_input(page, timeout=15_000)
             LOGGER.info("Prompt input located; filling prompt (%d characters)", len(args.prompt))
             prompt_box.fill(args.prompt)

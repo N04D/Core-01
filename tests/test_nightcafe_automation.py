@@ -12,7 +12,7 @@ from pathlib import Path
 from core.database import connect_database
 from core.setup_database import initialize_database
 from playbooks.nightcafe_99names import NAMES, seed_names, select_daily_name
-from plugins.media.nightcafe_automation import browser_context_options, click_with_overlay_fallback, has_external_session, managed_context_options, navigate_to_create_surface, validated_auth
+from plugins.media.nightcafe_automation import browser_context_options, click_with_overlay_fallback, has_external_session, managed_context_options, navigate_to_create_surface, select_cdp_page, validated_auth
 
 
 class _VisibleLocator:
@@ -191,6 +191,18 @@ class NightCafeWorkflowTests(unittest.TestCase):
         control = _InterceptedLocator()
         click_with_overlay_fallback(control)
         self.assertEqual(control.calls, [{}, {"force": True}, "js"])
+
+    def test_cdp_selects_existing_nightcafe_page_and_rejects_blank_only_context(self) -> None:
+        class Page:
+            def __init__(self, url):
+                self.url = url
+        class Context:
+            def __init__(self, pages):
+                self.pages = pages
+        page = Page("https://creator.nightcafe.studio/create")
+        self.assertIs(select_cdp_page(Context([Page("about:blank"), page])), page)
+        with self.assertRaises(RuntimeError):
+            select_cdp_page(Context([Page("about:blank")]))
 
 
 if __name__ == "__main__":
