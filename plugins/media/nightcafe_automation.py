@@ -56,7 +56,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--user-data-dir", type=Path, default=os.getenv("NIGHTCAFE_USER_DATA_DIR"), help="Open a user-owned persistent Chrome profile (headed).")
     parser.add_argument("--cdp-wait-seconds", type=float, default=15.0, help="Seconds to wait for a user-owned CDP endpoint before fallback.")
     parser.add_argument("--timeout", type=int, default=180_000)
-    parser.add_argument("--generation-timeout", type=int, default=300_000)
+    parser.add_argument("--generation-timeout", type=int, default=600_000,
+                        help="Maximum render/download wait in milliseconds (default: 600 seconds).")
     args = parser.parse_args()
     if args.event_id is not None and args.event_id < 1:
         parser.error("event_id must be positive")

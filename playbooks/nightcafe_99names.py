@@ -232,7 +232,7 @@ def run_automation(args: argparse.Namespace, row, prompt: str) -> dict[str, obje
     if args.claim_daily:
         command.append("--claim-daily")
     command.append("--headless" if args.headless else "--no-headless")
-    completed = subprocess.run(command, text=True, capture_output=True, timeout=300, check=False)
+    completed = subprocess.run(command, text=True, capture_output=True, timeout=600, check=False)
     if completed.stderr:
         sys.stderr.write(completed.stderr)
     lines = [line for line in completed.stdout.splitlines() if line.strip()]
