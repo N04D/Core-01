@@ -1,0 +1,14 @@
+{
+  "name": "nightcafe_99names_daily",
+  "version": 1,
+  "description": "Contract for the daily Markdown-driven 99 Names image pipeline.",
+  "required_plugins": [
+    {"name": "NightCafe Daily Stock Generator", "type": "media", "route": "NIGHTCAFE_GENERATE"},
+    {"name": "Image Overlay Processor", "type": "media", "route": "IMAGE_OVERLAY"}
+  ],
+  "dependencies": {
+    "sqlite_tables": ["nightcafe_names", "nightcafe_daily_runs", "media_sources", "media_assets"],
+    "markdown_source": "vault/prompts/nightcafe_99names.md",
+    "output_directory": "vault/media/publishing"
+  }
+}
