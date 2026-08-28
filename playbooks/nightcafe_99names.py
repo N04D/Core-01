@@ -276,9 +276,16 @@ def main() -> int:
     generator_key = f"nightcafe:{document.path}"
     seed_names_from_document(args.db, document)
     with connect_database(args.db) as db:
-        existing = db.execute("SELECT name_sequence FROM nightcafe_daily_runs WHERE run_date=?", (args.date,)).fetchone()
+        existing = db.execute("SELECT * FROM nightcafe_daily_runs WHERE run_date=?", (args.date,)).fetchone()
     if existing:
-        subject = document.subjects[int(existing[0]) - 1]
+        subject = document.subjects[int(existing["name_sequence"]) - 1]
+        # A successful daily run is idempotent: rerunning the playbook for the
+        # same date must not consume another credit or create a duplicate image.
+        existing_output = Path(existing["output_path"]) if existing["output_path"] else None
+        if existing["status"] in {"COMPLETED", "SIMULATED"} and existing_output and existing_output.is_file() and existing_output.stat().st_size >= 256:
+            LOGGER.info("Daily run %s already completed; reusing %s", args.date, existing_output)
+            print(json.dumps({"date": args.date, "name": subject.title, "status": "REUSED", "output_path": str(existing_output)}, ensure_ascii=False))
+            return 0
     else:
         subject = select_next_subject(args.db, document, generator_key)
         with connect_database(args.db) as db:
