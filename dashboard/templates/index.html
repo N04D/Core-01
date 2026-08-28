@@ -25,7 +25,7 @@
       #sidebar.collapsed .nav-btn { justify-content:center }
       #sidebar-backdrop { display:none!important; }
     }
-    .EasyMDEContainer .editor-toolbar { white-space:normal; border:0; border-bottom:1px solid rgba(255,255,255,.1); background:#11182a; }
+    .EasyMDEContainer .editor-toolbar { position:sticky; top:0; z-index:30; white-space:normal; border:0; border-bottom:1px solid rgba(255,255,255,.1); background:rgba(17,24,42,.96); box-shadow:0 8px 24px rgba(0,0,0,.22); backdrop-filter:blur(10px); }
     .EasyMDEContainer .editor-toolbar button { color:#cbd5e1!important; }
     .EasyMDEContainer .editor-toolbar button:hover, .EasyMDEContainer .editor-toolbar button.active { background:#29324a; border-color:#475569; }
     .EasyMDEContainer .editor-toolbar i.separator { border-color:#334155; }
@@ -110,9 +110,7 @@
           <button id="save-file" class="rounded-xl bg-accent px-5 py-2 font-medium text-white hover:brightness-110">Opslaan</button>
           <span id="editor-dirty" role="status" class="hidden text-sm font-medium text-amber-300">● Niet opgeslagen</span>
         </div>
-        <div class="overflow-hidden rounded-2xl border border-white/10 bg-panel">
-          <div class="min-w-0"><textarea id="markdown-content" aria-label="Markdown editor"></textarea></div>
-        </div>
+        <div class="min-w-0"><textarea id="markdown-content" aria-label="Markdown editor"></textarea></div>
       </section>
 
       <section id="view-drafts" class="view space-y-5">
