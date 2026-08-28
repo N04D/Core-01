@@ -13,6 +13,7 @@ from core.database import connect_database
 from core.setup_database import initialize_database
 from playbooks.nightcafe_99names import NAMES, seed_names, select_daily_name
 from plugins.media.nightcafe_automation import browser_context_options, click_with_overlay_fallback, has_external_session, managed_context_options, navigate_to_create_surface, select_cdp_page, validated_auth
+from playbooks.nightcafe_99names import run_automation_with_retries
 
 
 class _VisibleLocator:
@@ -205,6 +206,16 @@ class NightCafeWorkflowTests(unittest.TestCase):
             select_cdp_page(Context([Page("about:blank")]))
         with self.assertRaises(RuntimeError):
             select_cdp_page(Context([Page("https://nightcafe.studio/explore")]))
+
+    def test_playbook_retries_transient_download_failure_until_valid_result(self) -> None:
+        from argparse import Namespace
+        from unittest.mock import patch
+        args = Namespace(max_attempts=3, retry_delay=0.0)
+        valid = {"status": "COMPLETED", "asset_id": 7, "output_path": "/tmp/valid.png"}
+        with patch("playbooks.nightcafe_99names.run_automation", side_effect=[RuntimeError("generated image is empty"), valid]) as runner:
+            result = run_automation_with_retries(args, object(), "prompt")
+        self.assertEqual(result, valid)
+        self.assertEqual(runner.call_count, 2)
 
 
 if __name__ == "__main__":

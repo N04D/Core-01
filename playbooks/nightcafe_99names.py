@@ -10,6 +10,7 @@ import os
 import shlex
 import subprocess
 import sys
+import time
 from datetime import date
 from pathlib import Path
 from typing import Final
@@ -141,6 +142,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--claim-daily", action="store_true")
     parser.add_argument("--headless", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--llm-timeout", type=int, default=120)
+    parser.add_argument("--max-attempts", type=int, default=3, help="Maximum attempts for transient browser/render/download failures.")
+    parser.add_argument("--retry-delay", type=float, default=5.0, help="Initial retry delay in seconds (exponential backoff).")
     return parser.parse_args()
 
 
@@ -238,6 +241,32 @@ def run_automation(args: argparse.Namespace, row, prompt: str) -> dict[str, obje
     return json.loads(lines[-1])
 
 
+def run_automation_with_retries(args: argparse.Namespace, row, prompt: str) -> dict[str, object]:
+    """Retry transient browser/render/download failures without retrying auth blocks."""
+    if args.max_attempts < 1 or args.retry_delay < 0:
+        raise ValueError("max-attempts must be positive and retry-delay non-negative")
+    last_error: Exception | None = None
+    for attempt in range(1, args.max_attempts + 1):
+        try:
+            LOGGER.info("NightCafe automation attempt %d/%d", attempt, args.max_attempts)
+            result = run_automation(args, row, prompt)
+            if result.get("status") in {"BLOCKED_AUTH", "AUTH_REQUIRED"}:
+                raise PermissionError(str(result.get("error", "NightCafe authentication required")))
+            if result.get("status") not in {"COMPLETED", "SIMULATED"}:
+                raise RuntimeError(f"NightCafe returned non-success status: {result.get('status')}")
+            return result
+        except Exception as exc:
+            last_error = exc
+            message = str(exc).casefold()
+            if "auth" in message or "cloudflare" in message or attempt >= args.max_attempts:
+                LOGGER.error("NightCafe automation stopped after attempt %d: %s", attempt, exc)
+                break
+            delay = args.retry_delay * (2 ** (attempt - 1))
+            LOGGER.warning("Transient NightCafe failure on attempt %d; retrying in %.1fs: %s", attempt, delay, exc)
+            time.sleep(delay)
+    raise RuntimeError(f"NightCafe automation failed after {args.max_attempts} attempt(s): {last_error}") from last_error
+
+
 def main() -> int:
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     args = parse_args()
@@ -260,7 +289,7 @@ def main() -> int:
     prompt = generate_prompt(subject.title, subject.context or subject.title, args.llm_timeout, document.prompt_constraints())
     LOGGER.info("Selected %02d/%02d %s — %s", subject.sequence, len(document.subjects), subject.title, subject.context)
     try:
-        result = run_automation(args, row, prompt)
+        result = run_automation_with_retries(args, row, prompt)
         with connect_database(args.db) as db:
             db.execute(
                 """UPDATE nightcafe_daily_runs SET prompt=?,status=?,asset_id=?,output_path=?,error_log=NULL,
