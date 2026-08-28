@@ -22,6 +22,24 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCE_DIR = ROOT / "vault" / "media" / "nightcafe"
 PUBLICATION_DIR = ROOT / "vault" / "media" / "published"
 SUPPORTED = {".png", ".jpg", ".jpeg", ".webp"}
+PLUGIN_NAME = "Image Overlay Processor"
+
+
+def register_plugin(db_path: Path) -> None:
+    """Register this processor in the same event/plugin registry as providers."""
+    with connect_database(db_path) as db:
+        db.execute(
+            """INSERT INTO plugin_registry(plugin_name,type,executable_path,icon,is_active)
+               VALUES (?,?,?,?,1) ON CONFLICT(plugin_name) DO UPDATE SET
+               executable_path=excluded.executable_path,icon=excluded.icon,is_active=1""",
+            (PLUGIN_NAME, "media", str(Path(__file__).resolve()), "🖼️"),
+        )
+        db.execute(
+            """INSERT INTO event_routes(event_type,target_plugin_name) VALUES (?,?)
+               ON CONFLICT(event_type) DO UPDATE SET target_plugin_name=excluded.target_plugin_name""",
+            ("IMAGE_OVERLAY", PLUGIN_NAME),
+        )
+        db.commit()
 
 
 def latest_image(directory: Path = SOURCE_DIR) -> Path:
@@ -93,6 +111,7 @@ def register_overlay(db_path: Path, path: Path, text: str) -> int:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, help="Source image; defaults to the newest NightCafe image.")
+    parser.add_argument("--register", action="store_true", help="Register processor and event route in SQLite.")
     parser.add_argument("--output", type=Path, default=PUBLICATION_DIR / "nightcafe_overlay.jpg")
     parser.add_argument("--db", type=Path, help="Optional SQLite database for Media Store registration.")
     parser.add_argument("--text", default="", help="Caption/title, e.g. an artwork name or one of the 99 names.")
@@ -105,6 +124,12 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if args.register:
+        if not args.db:
+            raise SystemExit("--register requires --db")
+        register_plugin(args.db.expanduser().resolve())
+        print(json.dumps({"status": "REGISTERED", "plugin": PLUGIN_NAME, "event_type": "IMAGE_OVERLAY"}))
+        return 0
     source = args.input.expanduser().resolve() if args.input else latest_image()
     output = apply_overlay(source, args.output, text=args.text, border=args.border,
                            font_size=args.font_size, border_color=args.border_color,
