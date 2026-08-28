@@ -417,7 +417,7 @@ def validate_image_file(path: Path) -> None:
 
 def wait_for_rendered_result(page: object, timeout: int) -> None:
     """Wait until a result image is decoded at a useful resolution, not a placeholder."""
-    selector = "main img[src*='nightcafe'], main img[src*='r2.'], main img[alt*='creation' i]"
+    selector = "img[src*='images.nightcafe.studio/jobs/'], img[src*='nightcafe.studio/jobs/'], img[alt*='creation' i]"
     page.wait_for_function(
         """selector => Array.from(document.querySelectorAll(selector)).some(img =>
             img.complete && img.naturalWidth >= 32 && img.naturalHeight >= 32)""",
@@ -511,7 +511,10 @@ def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
             LOGGER.info("Blocking overlays cleared; clicking Create/Generate")
             click_with_overlay_fallback(create_control)
             LOGGER.info("Create/Generate clicked; waiting up to %d ms for rendered result", args.generation_timeout)
-            result = page.locator("main img[src*='nightcafe'], main img[src*='r2.'], main img[alt*='creation' i]").last
+            result = page.locator(
+                "img[src*='images.nightcafe.studio/jobs/'], "
+                "img[src*='nightcafe.studio/jobs/'], img[alt*='creation' i]"
+            ).last
             result.wait_for(state="visible", timeout=args.generation_timeout)
             wait_for_rendered_result(page, args.generation_timeout)
             LOGGER.info("Rendered result image detected with usable dimensions")
