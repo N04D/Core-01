@@ -203,6 +203,8 @@ class NightCafeWorkflowTests(unittest.TestCase):
         self.assertIs(select_cdp_page(Context([Page("about:blank"), page])), page)
         with self.assertRaises(RuntimeError):
             select_cdp_page(Context([Page("about:blank")]))
+        with self.assertRaises(RuntimeError):
+            select_cdp_page(Context([Page("https://nightcafe.studio/explore")]))
 
 
 if __name__ == "__main__":

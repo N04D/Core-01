@@ -287,12 +287,18 @@ def has_external_session(args: argparse.Namespace) -> bool:
 
 
 def select_cdp_page(context: object) -> object:
-    """Select an existing NightCafe tab; never create a blank page for CDP mode."""
+    """Select the existing creator.nightcafe.studio tab; never use a blank page."""
     pages = list(getattr(context, "pages", ()))
-    nightcafe_pages = [page for page in pages if "nightcafe" in str(getattr(page, "url", "")).casefold()]
-    if nightcafe_pages:
-        return nightcafe_pages[0]
-    raise RuntimeError("CDP connected, but no existing NightCafe tab was found; open NightCafe in Chrome first")
+    for index, page in enumerate(pages):
+        url = str(getattr(page, "url", ""))
+        LOGGER.debug("CDP tab[%d] URL=%s", index, url.split("?", 1)[0])
+        if "creator.nightcafe.studio" in url.casefold():
+            LOGGER.info("Using existing CDP NightCafe tab[%d]: %s", index, url.split("?", 1)[0])
+            return page
+    raise RuntimeError(
+        "CDP connected, but no existing tab contains creator.nightcafe.studio; "
+        "open NightCafe in Chrome first"
+    )
 
 
 def connect_cdp_with_retry(chromium: object, cdp_url: str, wait_seconds: float) -> object:
