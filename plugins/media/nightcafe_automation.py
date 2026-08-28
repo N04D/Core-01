@@ -495,12 +495,18 @@ def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
             LOGGER.info("Prompt input located; filling prompt (%d characters)", len(args.prompt))
             prompt_box.fill(args.prompt)
             LOGGER.info("Prompt input filled; resolving Create/Generate control")
-            create_control = find_control(
-                page,
-                roles=(("button", re.compile(r"^(?:create(?:\s+[\d.,]+)?|generate(?:\s+[\d.,]+)?)$", re.I)),),
-                css=("main button[type='submit']",),
-                timeout=15_000,
-            )
+            generate_name = re.compile(r"^(?:create(?:\s+[\d.,]+)?|generate(?:\s+[\d.,]+)?)$", re.I)
+            # The sidebar also has an exact "Create" button. Prefer the last
+            # visible matching control, which is the generator submit button.
+            role_matches = page.get_by_role("button", name=generate_name)
+            create_control = role_matches.last if role_matches.count() > 1 else role_matches.first
+            try:
+                create_control.wait_for(state="visible", timeout=15_000)
+            except Exception:
+                create_control = find_control(
+                    page, roles=(("button", generate_name),),
+                    css=("main button[type='submit']",), timeout=15_000,
+                )
             clear_blocking_overlays(page)
             LOGGER.info("Blocking overlays cleared; clicking Create/Generate")
             click_with_overlay_fallback(create_control)
