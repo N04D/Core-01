@@ -56,10 +56,19 @@ def apply_overlay(input_path: Path, output_path: Path, *, text: str = "", border
         draw = ImageDraw.Draw(image, "RGBA")
         font = _font(font_size)
         bbox = draw.textbbox((0, 0), text.strip(), font=font)
-        band_height = (bbox[3] - bbox[1]) + max(20, font_size // 2)
-        draw.rectangle((0, image.height - band_height, image.width, image.height), fill=(0, 0, 0, 120))
-        draw.text((border + 12, image.height - band_height + (band_height - (bbox[3] - bbox[1])) // 2 - bbox[1]),
-                  text.strip(), font=font, fill=text_color)
+        band_height = (bbox[3] - bbox[1]) + max(28, font_size)
+        top = image.height - band_height - border // 2
+        # A restrained navy-to-transparent gradient keeps the artwork visible.
+        for y in range(max(0, top), image.height):
+            progress = (y - top) / max(1, image.height - top)
+            alpha = int(18 + 105 * progress)
+            draw.line((0, y, image.width, y), fill=(10, 18, 35, alpha))
+        accent_y = max(0, top - 5)
+        draw.line((border, accent_y, image.width - border, accent_y), fill=(183, 155, 104, 210), width=2)
+        text_y = top + (band_height - (bbox[3] - bbox[1])) // 2 - bbox[1]
+        # Subtle shadow improves legibility without a heavy box.
+        draw.text((border + 13, text_y + 2), text.strip(), font=font, fill=(0, 0, 0, 130))
+        draw.text((border + 12, text_y), text.strip(), font=font, fill=text_color)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if output_path.suffix.lower() in {".jpg", ".jpeg"}:
         image.convert("RGB").save(output_path, quality=95)
