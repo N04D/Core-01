@@ -263,7 +263,8 @@ def navigate_to_create_surface(page: object, timeout: int, *, reuse_existing: bo
     current_url = str(getattr(page, "url", ""))
     if reuse_existing and current_url.startswith("about:blank"):
         raise RuntimeError("CDP session has no active NightCafe page; open NightCafe in the attached browser first")
-    if not (reuse_existing and "nightcafe" in current_url.casefold()):
+    on_create_surface = "/create" in current_url.casefold()
+    if not (reuse_existing and "nightcafe" in current_url.casefold() and on_create_surface):
         page.goto(home_url, wait_until="domcontentloaded", timeout=timeout)
     else:
         LOGGER.info("Reusing active NightCafe page without navigating from about:blank: %s", current_url.split("?", 1)[0])
@@ -496,7 +497,7 @@ def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
             LOGGER.info("Prompt input filled; resolving Create/Generate control")
             create_control = find_control(
                 page,
-                roles=(("button", re.compile(r"create|generate", re.I)),),
+                roles=(("button", re.compile(r"^(?:create(?:\s+[\d.,]+)?|generate(?:\s+[\d.,]+)?)$", re.I)),),
                 css=("main button[type='submit']",),
                 timeout=15_000,
             )
