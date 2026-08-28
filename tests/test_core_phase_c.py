@@ -116,7 +116,7 @@ class BrowserRobustnessTests(unittest.TestCase):
         page = FakePage(role_visible=False, css_visible=True)
         control = find_prompt_input(page, timeout=1000)
         self.assertIsInstance(control, FakeLocator)
-        self.assertIn("placeholder", page.calls)
+        self.assertTrue(any("placeholder" in call for call in page.calls))
         self.assertTrue(any(call.startswith("css:") for call in page.calls))
 
     def test_page_trace_writes_protected_screenshot_and_html(self) -> None:

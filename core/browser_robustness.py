@@ -53,35 +53,22 @@ def find_control(
 
 
 def find_prompt_input(page: Any, *, timeout: int = 30_000, scope: Any | None = None) -> Any:
-    """Find NightCafe-style prompt fields across accessible and legacy DOM variants."""
+    """Find an actually editable NightCafe prompt field.
+
+    NightCafe exposes a ``Help: Text Prompt`` button whose accessible name
+    contains "Prompt".  Therefore this locator intentionally avoids broad
+    role/label lookups and only considers editable DOM element types.
+    """
     root = scope or page
     candidates: list[Any] = []
-    role_names = (
-        re.compile(r"prompt|enter your prompt|describe (?:your )?creation|text to image", re.I),
-    )
-    for name in role_names:
-        try:
-            candidates.append(root.get_by_role("textbox", name=name).first)
-        except Exception:
-            pass
-    for placeholder in (
-        re.compile(r"enter\s+your\s+prompt", re.I),
-        re.compile(r"(?:describe|imagine)\s+(?:your\s+)?(?:creation|image)", re.I),
-        re.compile(r"prompt", re.I),
-    ):
-        try:
-            candidates.append(root.get_by_placeholder(placeholder).first)
-        except Exception:
-            pass
-    for label in (re.compile(r"prompt", re.I), re.compile(r"describe.*creation", re.I)):
-        try:
-            candidates.append(root.get_by_label(label).first)
-        except Exception:
-            pass
     selectors = (
-        "textarea[placeholder*='prompt' i]", "textarea[aria-label*='prompt' i]",
-        "input[placeholder*='prompt' i]", "[contenteditable='true'][aria-label*='prompt' i]",
-        "textarea", "input[type='text']", "[role='textbox']",
+        "textarea[placeholder*='prompt' i]:not([role='button']):not([aria-label*='help' i])",
+        "textarea[aria-label*='prompt' i]:not([role='button']):not([aria-label*='help' i])",
+        "input[type='text'][placeholder*='prompt' i]:not([role='button']):not([aria-label*='help' i])",
+        "[contenteditable='true'][aria-label*='prompt' i]:not([role='button']):not([aria-label*='help' i])",
+        "textarea:not([role='button']):not([aria-label*='help' i])",
+        "input[type='text']:not([role='button']):not([aria-label*='help' i])",
+        "[contenteditable='true']:not([role='button']):not([aria-label*='help' i])",
     )
     for selector in selectors:
         try:
@@ -94,10 +81,13 @@ def find_prompt_input(page: Any, *, timeout: int = 30_000, scope: Any | None = N
     for candidate in candidates:
         try:
             candidate.wait_for(state="visible", timeout=slice_timeout)
+            is_editable = getattr(candidate, "is_editable", None)
+            if callable(is_editable) and not is_editable(timeout=slice_timeout):
+                continue
             return candidate
         except Exception:
             continue
-    raise LookupError("no prompt input (role, placeholder, label, or scoped CSS) became visible")
+    raise LookupError("no editable prompt input (textarea, text input, or contenteditable) became visible")
 
 
 def find_with_accessible_fallbacks(
