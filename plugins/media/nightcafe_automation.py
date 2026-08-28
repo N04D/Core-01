@@ -415,13 +415,17 @@ def validate_image_file(path: Path) -> None:
         LOGGER.debug("Pillow unavailable; magic-byte validation used for %s", path)
 
 
-def wait_for_rendered_result(page: object, timeout: int) -> None:
+RESULT_SELECTOR = "img[src*='images.nightcafe.studio/jobs/'], img[src*='nightcafe.studio/jobs/'], img[alt*='creation' i]"
+
+
+def wait_for_rendered_result(page: object, timeout: int, *, exclude_sources: set[str] | None = None) -> None:
     """Wait until a result image is decoded at a useful resolution, not a placeholder."""
-    selector = "img[src*='images.nightcafe.studio/jobs/'], img[src*='nightcafe.studio/jobs/'], img[alt*='creation' i]"
+    excluded = list(exclude_sources or ())
     page.wait_for_function(
-        """selector => Array.from(document.querySelectorAll(selector)).some(img =>
-            img.complete && img.naturalWidth >= 32 && img.naturalHeight >= 32)""",
-        arg=selector,
+        """({selector, excluded}) => Array.from(document.querySelectorAll(selector)).some(img =>
+            img.complete && img.naturalWidth >= 32 && img.naturalHeight >= 32 &&
+            !excluded.includes(img.currentSrc || img.src))""",
+        arg={"selector": RESULT_SELECTOR, "excluded": excluded},
         timeout=timeout,
     )
 
@@ -509,14 +513,27 @@ def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
                 )
             clear_blocking_overlays(page)
             LOGGER.info("Blocking overlays cleared; clicking Create/Generate")
+            existing_sources: set[str] = set()
+            try:
+                existing_sources = set(page.locator(RESULT_SELECTOR).evaluate_all("els => els.map(e => e.currentSrc || e.src)"))
+            except Exception:
+                pass
             click_with_overlay_fallback(create_control)
             LOGGER.info("Create/Generate clicked; waiting up to %d ms for rendered result", args.generation_timeout)
-            result = page.locator(
-                "img[src*='images.nightcafe.studio/jobs/'], "
-                "img[src*='nightcafe.studio/jobs/'], img[alt*='creation' i]"
-            ).last
-            result.wait_for(state="visible", timeout=args.generation_timeout)
-            wait_for_rendered_result(page, args.generation_timeout)
+            wait_for_rendered_result(page, args.generation_timeout, exclude_sources=existing_sources)
+            images = page.locator(RESULT_SELECTOR)
+            result = None
+            for index in range(images.count()):
+                candidate = images.nth(index)
+                try:
+                    src = candidate.get_attribute("src") or ""
+                    if src not in existing_sources and candidate.is_visible():
+                        result = candidate
+                        break
+                except Exception:
+                    continue
+            if result is None:
+                raise RuntimeError("NightCafe render appeared, but no new job image was found")
             LOGGER.info("Rendered result image detected with usable dimensions")
             source = result.get_attribute("src")
             if not source:
