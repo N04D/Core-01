@@ -63,11 +63,11 @@ def find_prompt_input(page: Any, *, timeout: int = 30_000, scope: Any | None = N
     candidates: list[Any] = []
     selectors = (
         "textarea[placeholder*='prompt' i]:not([role='button']):not([aria-label*='help' i])",
+        "textarea[placeholder*='describe' i]:not([role='button']):not([aria-label*='help' i])",
         "textarea[aria-label*='prompt' i]:not([role='button']):not([aria-label*='help' i])",
         "input[type='text'][placeholder*='prompt' i]:not([role='button']):not([aria-label*='help' i])",
+        "input[type='text'][placeholder*='describe' i]:not([role='button']):not([aria-label*='help' i])",
         "[contenteditable='true'][aria-label*='prompt' i]:not([role='button']):not([aria-label*='help' i])",
-        "textarea:not([role='button']):not([aria-label*='help' i])",
-        "input[type='text']:not([role='button']):not([aria-label*='help' i])",
         "[contenteditable='true']:not([role='button']):not([aria-label*='help' i])",
     )
     for selector in selectors:
