@@ -25,7 +25,6 @@ if __package__ in {None, ""}:
 from core.database import connect_database
 from core.setup_database import initialize_database
 from core.md_subject_parser import SubjectDocument, load_subject_document
-from plugins.media.image_overlay import apply_overlay, register_overlay
 from plugins.media.nightcafe_automation import (
     safe_stem,
 )
@@ -204,6 +203,7 @@ def main() -> int:
         FINAL_DIR.mkdir(parents=True, exist_ok=True)
         final = FINAL_DIR / f"{args.date}_{subject.sequence:02d}_{safe_stem(subject.title)}.jpg"
         caption = "\n".join((subject.title, subject.title, subject.context or subject.title))
+        from plugins.media.image_overlay import apply_overlay, register_overlay
         apply_overlay(raw, final, text=caption, font_size=args.overlay_font_size)
         asset_id = register_overlay(args.db, final, caption)
         status = "SIMULATED" if raw_result.get("status") == "SIMULATED" else "COMPLETED"
