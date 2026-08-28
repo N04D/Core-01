@@ -421,7 +421,7 @@ def wait_for_rendered_result(page: object, timeout: int) -> None:
     page.wait_for_function(
         """selector => Array.from(document.querySelectorAll(selector)).some(img =>
             img.complete && img.naturalWidth >= 32 && img.naturalHeight >= 32)""",
-        selector,
+        arg=selector,
         timeout=timeout,
     )
 
