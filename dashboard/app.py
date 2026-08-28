@@ -536,6 +536,46 @@ def create_app(database_path: Path | None = None) -> Flask:
             )
         return jsonify(records)
 
+    @app.get("/api/playbooks")
+    def playbooks() -> Any:
+        records = []
+        for path in sorted((PROJECT_ROOT / "playbooks").glob("*.py")):
+            if path.name.startswith("__"): continue
+            item = {"name": path.stem, "path": str(path.relative_to(PROJECT_ROOT)), "description": ""}
+            try:
+                text = path.read_text(encoding="utf-8")[:1200]
+                item["description"] = text.split('"""', 2)[1].strip().splitlines()[0] if '"""' in text else ""
+            except OSError: pass
+            contract = PROJECT_ROOT / "playbooks" / "contracts" / f"{path.stem}.contract.json"
+            if contract.is_file():
+                try: item["contract"] = json.loads(contract.read_text(encoding="utf-8"))
+                except json.JSONDecodeError: item["contract"] = None
+            records.append(item)
+        return jsonify(records)
+
+    @app.get("/api/jobs")
+    def jobs() -> Any:
+        with connect() as connection:
+            return jsonify([dict(row) for row in connection.execute("SELECT * FROM scheduled_jobs ORDER BY next_run_at,id")])
+
+    @app.post("/api/jobs")
+    def create_job() -> Any:
+        from core.scheduler import add_job
+        body = request.get_json(silent=True) or {}
+        try:
+            job_id = add_job(app.config["DATABASE"], str(body["playbook"]), str(body["scheduled_time"]), str(body.get("frequency", "ONCE")), body.get("payload") or {})
+        except (KeyError, ValueError) as exc: abort(400, description=str(exc))
+        return jsonify({"id": job_id}), 201
+
+    @app.patch("/api/jobs/<int:job_id>")
+    def update_job(job_id: int) -> Any:
+        status = (request.get_json(silent=True) or {}).get("status")
+        if status not in {"ACTIVE", "PAUSED", "CANCELLED"}: abort(400, description="ongeldige jobstatus")
+        with connect() as connection:
+            cur = connection.execute("UPDATE scheduled_jobs SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (status, job_id)); connection.commit()
+        if cur.rowcount != 1: abort(404)
+        return jsonify({"id": job_id, "status": status})
+
     @app.get("/api/media")
     def media_library() -> Any:
         root = VAULT_ROOT / "media"

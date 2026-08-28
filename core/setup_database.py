@@ -83,6 +83,18 @@ SCHEMA: Final[dict[str, str]] = {
                 CHECK (status IN ('PENDING', 'DISPATCHED', 'CANCELLED', 'FAILED'))
         )
     """,
+    "scheduled_jobs": """
+        CREATE TABLE IF NOT EXISTS scheduled_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, playbook TEXT NOT NULL,
+            payload JSON NOT NULL DEFAULT '{}' CHECK (json_valid(payload)),
+            scheduled_time TEXT NOT NULL,
+            frequency TEXT NOT NULL CHECK (frequency IN ('ONCE','DAILY','WEEKLY','MONTHLY')),
+            status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','PAUSED','COMPLETED','CANCELLED','FAILED')),
+            last_run_at TEXT, next_run_at TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """,
     "media_sources": """
         CREATE TABLE IF NOT EXISTS media_sources (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
