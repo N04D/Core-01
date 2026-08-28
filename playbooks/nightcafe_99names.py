@@ -140,6 +140,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--date", default=date.today().isoformat())
     parser.add_argument("--live", action="store_true")
     parser.add_argument("--claim-daily", action="store_true")
+    parser.add_argument("--model")
+    parser.add_argument("--format", dest="aspect_format")
+    parser.add_argument("--negative-prompt", default="")
+    parser.add_argument("--steps", type=int)
     parser.add_argument("--headless", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--llm-timeout", type=int, default=120)
     parser.add_argument("--max-attempts", type=int, default=3, help="Maximum attempts for transient browser/render/download failures.")
@@ -231,6 +235,14 @@ def run_automation(args: argparse.Namespace, row, prompt: str) -> dict[str, obje
         command.append("--simulate")
     if args.claim_daily:
         command.append("--claim-daily")
+    if args.model:
+        command.extend(["--model", args.model])
+    if args.aspect_format:
+        command.extend(["--format", args.aspect_format])
+    if args.negative_prompt:
+        command.extend(["--negative-prompt", args.negative_prompt])
+    if args.steps is not None:
+        command.extend(["--steps", str(args.steps)])
     command.append("--headless" if args.headless else "--no-headless")
     completed = subprocess.run(command, text=True, capture_output=True, timeout=600, check=False)
     if completed.stderr:

@@ -43,6 +43,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
     parser.add_argument("--event_id", type=int)
     parser.add_argument("--prompt")
+    parser.add_argument("--model", help="NightCafe model name (for example: Flux 2 Klein 9B Fast).")
+    parser.add_argument("--format", dest="aspect_format", help="Aspect ratio/format (for example: 16:9).")
+    parser.add_argument("--negative-prompt", default="", help="Negative prompt, when supported by the UI.")
+    parser.add_argument("--steps", type=int, help="Generation steps, when exposed by the selected model.")
     parser.add_argument("--name")
     parser.add_argument("--sequence", type=int)
     parser.add_argument("--run-date")
@@ -65,6 +69,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("sequence must be 1..99")
     if args.timeout < 10_000:
         parser.error("timeout must be at least 10000 ms")
+    if args.steps is not None and args.steps < 1:
+        parser.error("steps must be positive")
     return args
 
 
@@ -236,6 +242,40 @@ def clear_blocking_overlays(page: object) -> int:
     except Exception:
         pass
     return dismissed
+
+
+def configure_generation_options(page: object, args: argparse.Namespace) -> None:
+    """Best-effort configuration of optional NightCafe generation controls."""
+    if args.model:
+        try:
+            find_control(page, roles=(("button", re.compile(re.escape(args.model), re.I)),),
+                         labels=(re.compile(re.escape(args.model), re.I),), timeout=5_000).click()
+            LOGGER.info("Model selected: %s", args.model)
+        except Exception as exc:
+            LOGGER.warning("Model control not available (%s): %s", args.model, exc)
+    if args.aspect_format:
+        try:
+            find_control(page, roles=(("button", re.compile(re.escape(args.aspect_format), re.I)),),
+                         labels=(re.compile(re.escape(args.aspect_format), re.I),), timeout=5_000).click()
+            LOGGER.info("Aspect format selected: %s", args.aspect_format)
+        except Exception as exc:
+            LOGGER.warning("Format control not available (%s): %s", args.aspect_format, exc)
+    if args.negative_prompt:
+        try:
+            field = find_control(page, labels=(re.compile(r"negative\s+prompt", re.I),),
+                                 css=("textarea[placeholder*='negative' i]", "input[placeholder*='negative' i]"), timeout=3_000)
+            field.fill(args.negative_prompt)
+            LOGGER.info("Negative prompt configured")
+        except Exception as exc:
+            LOGGER.warning("Negative-prompt control not available: %s", exc)
+    if args.steps is not None:
+        try:
+            field = find_control(page, labels=(re.compile(r"steps?", re.I),),
+                                 css=("input[name*='step' i]", "input[type='number']"), timeout=3_000)
+            field.fill(str(args.steps))
+            LOGGER.info("Steps configured: %d", args.steps)
+        except Exception as exc:
+            LOGGER.warning("Steps control not available: %s", exc)
 
 
 def click_with_overlay_fallback(control: object) -> None:
@@ -498,6 +538,7 @@ def run_live(args: argparse.Namespace, output: Path) -> tuple[Path, str | None]:
             prompt_box = find_prompt_input(page, timeout=15_000)
             LOGGER.info("Prompt input located; filling prompt (%d characters)", len(args.prompt))
             prompt_box.fill(args.prompt)
+            configure_generation_options(page, args)
             LOGGER.info("Prompt input filled; resolving Create/Generate control")
             generate_name = re.compile(r"^(?:create(?:\s+[\d.,]+)?|generate(?:\s+[\d.,]+)?)$", re.I)
             # The sidebar also has an exact "Create" button. Prefer the last
@@ -625,6 +666,10 @@ def main() -> int:
     if args.event_id is not None:
         payload = load_event(args.db, args.event_id)
         args.prompt = args.prompt or str(payload.get("prompt") or payload.get("content") or "")
+        args.model = args.model or payload.get("model")
+        args.aspect_format = args.aspect_format or payload.get("format") or payload.get("aspect_ratio")
+        args.negative_prompt = args.negative_prompt or str(payload.get("negative_prompt") or "")
+        args.steps = args.steps or payload.get("steps")
         args.name = args.name or str(payload.get("name") or "Daily subject")
         args.sequence = args.sequence or int(payload.get("sequence", 1))
         args.run_date = args.run_date or str(payload.get("run_date") or datetime.now(timezone.utc).date().isoformat())
@@ -636,6 +681,8 @@ def main() -> int:
     metadata: dict[str, object] = {
         "name": args.name, "sequence": args.sequence, "run_date": args.run_date,
         "prompt": args.prompt, "generator": PLUGIN_NAME,
+        "model": args.model, "format": args.aspect_format,
+        "negative_prompt": args.negative_prompt, "steps": args.steps,
     }
     try:
         if args.simulate:
