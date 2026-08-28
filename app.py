@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parent
 DB = ROOT / "db" / "events.db"
 AUTOMATION = ROOT / "plugins" / "media" / "nightcafe_automation.py"
 MEDIA_DIR = ROOT / "vault" / "media" / "nightcafe"
+PUBLISHED_MEDIA_DIR = ROOT / "vault" / "media" / "published"
 
 app = FastAPI(title="NightCafe Local Generation API", version="1.0")
 _jobs: dict[str, dict[str, object]] = {}
@@ -31,6 +32,13 @@ class GenerationRequest(BaseModel):
     negative_prompt: str = Field(default="", max_length=4000)
     steps: int | None = Field(None, ge=1, le=200)
     live: bool = False
+
+
+class OverlayRequest(BaseModel):
+    input: str | None = None
+    text: str = ""
+    border: int = Field(default=24, ge=0, le=200)
+    font_size: int = Field(default=34, ge=8, le=160)
 
 
 def _run_job(job_id: str, request: GenerationRequest) -> None:
@@ -84,3 +92,18 @@ def list_results() -> list[dict[str, object]]:
         for p in sorted(MEDIA_DIR.iterdir(), key=lambda item: item.stat().st_mtime, reverse=True)
         if p.is_file() and p.suffix.lower() in allowed and p.stat().st_size >= 256
     ]
+
+
+@app.post("/api/nightcafe/overlay")
+def create_overlay(request: OverlayRequest) -> dict[str, object]:
+    from plugins.media.image_overlay import apply_overlay, latest_image
+
+    source = (ROOT / request.input).resolve() if request.input else latest_image(MEDIA_DIR)
+    if ROOT not in source.parents or not source.is_file():
+        raise HTTPException(status_code=400, detail="input must be an existing project image")
+    output = PUBLISHED_MEDIA_DIR / f"{source.stem}_overlay.jpg"
+    try:
+        apply_overlay(source, output, text=request.text, border=request.border, font_size=request.font_size)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "COMPLETED", "source": str(source), "output": str(output)}
