@@ -5,6 +5,7 @@ PROJECT_ROOT="/home/infra/dev"
 PROFILE_DIR="${NIGHTCAFE_CHROME_PROFILE:-${PROJECT_ROOT}/vault/chrome_profile}"
 CDP_PORT="${NIGHTCAFE_CDP_PORT:-9222}"
 HEADLESS="${NIGHTCAFE_HEADLESS:-new}"
+START_URL="${NIGHTCAFE_START_URL:-https://creator.nightcafe.studio/}"
 
 HEADLESS_ARGS=()
 case "${HEADLESS}" in
@@ -57,4 +58,4 @@ exec "${CHROMIUM_BIN}" \
     --window-size=1365,768 \
     "${HEADLESS_ARGS[@]}" \
     "${SANDBOX_ARGS[@]}" \
-    "${NIGHTCAFE_CHROMIUM_EXTRA_ARGS:-about:blank}"
+    "${START_URL}"

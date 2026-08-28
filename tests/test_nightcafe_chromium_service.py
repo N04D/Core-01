@@ -16,12 +16,14 @@ class NightCafeChromiumServiceTests(unittest.TestCase):
         unit = (ROOT / "deploy/nightcafe-chromium.service").read_text(encoding="utf-8")
         self.assertIn('"--remote-debugging-port=${CDP_PORT}"', (ROOT / "scripts/start_nightcafe_chromium.sh").read_text())
         self.assertIn("/home/infra/dev/vault/chrome_profile", unit)
+        self.assertIn("NIGHTCAFE_START_URL=https://creator.nightcafe.studio/", unit)
         self.assertIn("ExecStartPost=/home/infra/dev/scripts/check_nightcafe_chromium.sh", unit)
         self.assertIn("KillMode=control-group", unit)
         launcher = (ROOT / "scripts/start_nightcafe_chromium.sh").read_text(encoding="utf-8")
         self.assertIn("--enable-gpu", launcher)
         self.assertIn("--headless=new", launcher)
         self.assertIn("NIGHTCAFE_NO_SANDBOX", launcher)
+        self.assertIn("https://creator.nightcafe.studio/", launcher)
 
     def test_scripts_are_executable_and_health_endpoint_is_local(self) -> None:
         for path in (ROOT / "scripts/start_nightcafe_chromium.sh", ROOT / "scripts/check_nightcafe_chromium.sh", ROOT / "deploy/install_nightcafe_chromium_user.sh"):
