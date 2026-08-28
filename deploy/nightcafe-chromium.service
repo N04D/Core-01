@@ -12,7 +12,7 @@ Environment=XDG_RUNTIME_DIR=/run/user/%U
 Environment=NIGHTCAFE_CDP_PORT=9222
 Environment=NIGHTCAFE_CHROME_PROFILE=/home/infra/dev/vault/chrome_profile
 Environment=NIGHTCAFE_START_URL=https://creator.nightcafe.studio/
-Environment=NIGHTCAFE_HEADLESS=new
+Environment=NIGHTCAFE_HEADLESS=false
 # Set to 1 only on kernels/containers that reject Chromium's sandbox namespaces.
 Environment=NIGHTCAFE_NO_SANDBOX=1
 ExecStart=/home/infra/dev/scripts/start_nightcafe_chromium.sh
