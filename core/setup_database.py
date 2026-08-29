@@ -126,6 +126,20 @@ SCHEMA: Final[dict[str, str]] = {
             UNIQUE(source_id, external_id)
         )
     """,
+    "overlay_formats": """
+        CREATE TABLE IF NOT EXISTS overlay_formats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            lines JSON NOT NULL CHECK (json_valid(lines)),
+            title_size INTEGER NOT NULL DEFAULT 96,
+            subtitle_size INTEGER NOT NULL DEFAULT 48,
+            position TEXT NOT NULL DEFAULT 'center' CHECK (position IN ('center','top','bottom')),
+            border INTEGER NOT NULL DEFAULT 24,
+            is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0,1)),
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """,
     "media_links": """
         CREATE TABLE IF NOT EXISTS media_links (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

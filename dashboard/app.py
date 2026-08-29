@@ -910,6 +910,45 @@ def create_app(database_path: Path | None = None) -> Flask:
             plugin = active_plugin(connection, plugin_name)
         return jsonify({"plugin": dict(plugin), "auth": auth_status(plugin_name)})
 
+    @app.get("/api/overlay-formats")
+    def overlay_formats() -> Any:
+        with connect() as connection:
+            rows = connection.execute("SELECT * FROM overlay_formats ORDER BY is_default DESC,name").fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            try: item["lines"] = json.loads(item["lines"])
+            except (TypeError, json.JSONDecodeError): item["lines"] = []
+            result.append(item)
+        return jsonify(result)
+
+    @app.post("/api/overlay-formats")
+    def create_overlay_format() -> Any:
+        body = request.get_json(silent=True) or {}
+        name = str(body.get("name", "")).strip()
+        lines = body.get("lines")
+        if not name or not isinstance(lines, list) or not lines or any(not isinstance(line, str) or not line.strip() for line in lines):
+            abort(400, description="naam en minimaal één tekstregel zijn verplicht")
+        position = str(body.get("position", "center"));
+        if position not in {"center", "top", "bottom"}: abort(400, description="ongeldige positie")
+        try:
+            title_size = max(12, min(240, int(body.get("title_size", 96))))
+            subtitle_size = max(10, min(180, int(body.get("subtitle_size", 48))))
+            border = max(0, min(200, int(body.get("border", 24))))
+        except (TypeError, ValueError): abort(400, description="lettergroottes en kader moeten numeriek zijn")
+        with connect() as connection:
+            try:
+                cur = connection.execute("INSERT INTO overlay_formats(name,lines,title_size,subtitle_size,position,border) VALUES (?,?,?,?,?,?)", (name, json.dumps(lines, ensure_ascii=False), title_size, subtitle_size, position, border)); connection.commit()
+            except sqlite3.IntegrityError: abort(409, description="formatnaam bestaat al")
+        return jsonify({"id": cur.lastrowid, "name": name}), 201
+
+    @app.delete("/api/overlay-formats/<int:format_id>")
+    def delete_overlay_format(format_id: int) -> Any:
+        with connect() as connection:
+            cur = connection.execute("DELETE FROM overlay_formats WHERE id=?", (format_id,)); connection.commit()
+        if cur.rowcount != 1: abort(404)
+        return jsonify({"deleted": format_id})
+
     @app.post("/api/plugins/<path:plugin_name>/authenticate")
     def authenticate_plugin(plugin_name: str) -> Any:
         """Start a detached headed login helper for a supported active plugin."""
