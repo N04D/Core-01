@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Final
 from uuid import uuid4
+import threading
 
 from flask import Flask, abort, jsonify, render_template, request, send_file
 from werkzeug.utils import secure_filename
@@ -70,6 +71,7 @@ AUTH_PROFILES: Final = {
         "auth_file": PROJECT_ROOT / "config" / "medium_auth.json",
     },
 }
+NIGHTCAFE_JOBS: dict[str, dict[str, Any]] = {}
 
 
 def create_app(database_path: Path | None = None) -> Flask:
@@ -651,6 +653,39 @@ def create_app(database_path: Path | None = None) -> Flask:
                 "label": f"{row['event_type']} · {row['scheduled_time']} · {Path(payload.get('draft_file', '')).name}",
             })
         return jsonify(drafts)
+
+    @app.post("/api/nightcafe/generations")
+    def start_nightcafe_generation() -> Any:
+        body = request.get_json(silent=True) or {}
+        prompt = str(body.get("prompt", "")).strip()
+        if not prompt: abort(400, description="prompt is verplicht")
+        job_id = uuid4().hex
+        NIGHTCAFE_JOBS[job_id] = {"id": job_id, "status": "RUNNING", "prompt": prompt}
+        def run() -> None:
+            output_dir = VAULT_ROOT / "media" / "nightcafe"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            output = output_dir / f"ui_{job_id}.png"
+            command = [sys.executable, str(PROJECT_ROOT / "plugins/media/nightcafe_automation.py"), "--db", app.config["DATABASE"], "--prompt", prompt, "--name", "UI Generation", "--sequence", "1", "--run-date", datetime.now(timezone.utc).date().isoformat(), "--output-dir", str(output_dir)]
+            command.append("--simulate" if body.get("simulate", False) else "--live")
+            if body.get("model"): command += ["--model", str(body["model"])]
+            if body.get("format"): command += ["--format", str(body["format"])]
+            if body.get("negative_prompt"): command += ["--negative-prompt", str(body["negative_prompt"])]
+            if body.get("steps"): command += ["--steps", str(int(body["steps"]))]
+            try:
+                result = subprocess.run(command, cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=660)
+                if result.returncode: raise RuntimeError(result.stdout[-500:] or result.stderr[-500:])
+                lines = [line for line in result.stdout.splitlines() if line.strip()]
+                NIGHTCAFE_JOBS[job_id].update(status="COMPLETED", result=json.loads(lines[-1]) if lines else {})
+            except Exception as exc:
+                NIGHTCAFE_JOBS[job_id].update(status="FAILED", error=str(exc))
+        threading.Thread(target=run, name=f"nightcafe-{job_id[:8]}", daemon=True).start()
+        return jsonify(NIGHTCAFE_JOBS[job_id]), 202
+
+    @app.get("/api/nightcafe/generations/<job_id>")
+    def nightcafe_generation_status(job_id: str) -> Any:
+        job = NIGHTCAFE_JOBS.get(job_id)
+        if job is None: abort(404, description="generatie niet gevonden")
+        return jsonify(job)
 
     @app.get("/api/media-store/assets/<int:asset_id>/content")
     def media_store_content(asset_id: int) -> Any:
