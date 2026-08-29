@@ -19,7 +19,7 @@ def register(db: Path):
     with connect_database(db) as c:
         c.execute("INSERT INTO plugin_registry(plugin_name,type,executable_path,icon,is_active) VALUES (?,?,?,?,1) ON CONFLICT(plugin_name) DO UPDATE SET executable_path=excluded.executable_path,is_active=1",('Suno Personal Backup','io',str(Path(__file__).resolve()),'🎵')); c.execute("INSERT INTO event_routes(event_type,target_plugin_name) VALUES (?,?) ON CONFLICT(event_type) DO UPDATE SET target_plugin_name=excluded.target_plugin_name",('SUNO_BACKUP','Suno Personal Backup')); c.commit()
 def args():
-    p=argparse.ArgumentParser(description=__doc__); p.add_argument('--register',action='store_true'); p.add_argument('--backup',action='store_true'); p.add_argument('--db',type=Path,default=DEFAULT_DB); p.add_argument('--auth',type=Path,default=DEFAULT_AUTH); p.add_argument('--cdp-url',default=os.getenv('SUNO_CDP_URL')); p.add_argument('--url',default='https://suno.com/library'); p.add_argument('--output',type=Path,default=OUT); p.add_argument('--delay',type=float,default=1.0); return p.parse_args()
+    p=argparse.ArgumentParser(description=__doc__); p.add_argument('--register',action='store_true'); p.add_argument('--backup',action='store_true'); p.add_argument('--db',type=Path,default=DEFAULT_DB); p.add_argument('--auth',type=Path,default=DEFAULT_AUTH); p.add_argument('--cdp-url',default=os.getenv('SUNO_CDP_URL')); p.add_argument('--url',default='https://suno.com/library'); p.add_argument('--output',type=Path,default=OUT); p.add_argument('--delay',type=float,default=1.0); p.add_argument('--limit',type=int,default=0,help='Maximum songs per run; 0 means all'); return p.parse_args()
 def main():
     a=args(); a.db=a.db.resolve(); register(a.db)
     if a.register and not a.backup: print(json.dumps({'status':'REGISTERED','plugin':'Suno Personal Backup'})); return 0
@@ -38,7 +38,7 @@ def main():
         body_text=page.locator('body').inner_text(timeout=5000).casefold()
         if 'log in' in body_text or 'join suno' in body_text: raise PermissionError('Suno session is not authenticated on the selected library page')
         urls=[]
-        for _ in range(40):
+        for _ in range(8 if a.limit else 40):
             links=page.locator("a[href*='.mp3'],a[href*='.wav'],audio[src],source[src],a[download]")
             for i in range(links.count()):
                 node=links.nth(i); u=node.get_attribute('href') or node.get_attribute('src')
@@ -52,11 +52,12 @@ def main():
         # Suno exposes downloads through the per-song … menu rather than stable
         # audio URLs. Execute the documented UI flow for each visible song.
         menus=page.get_by_role('button',name=re.compile(r'more options',re.I)); downloaded=[]
-        for index in range(menus.count()):
+        total_menus=menus.count(); max_menus=min(total_menus,a.limit) if a.limit else total_menus
+        for index in range(max_menus):
             try:
-                menus.nth(index).click(); page.get_by_role('menuitem',name='Download').click(); page.wait_for_timeout(200)
+                menus.nth(index).click(timeout=3_000); page.get_by_role('menuitem',name='Download').click(timeout=3_000); page.wait_for_timeout(200)
                 if page.get_by_role('menuitem',name=re.compile(r'^MP3$',re.I)).count(): page.get_by_role('menuitem',name=re.compile(r'^MP3$',re.I)).click()
-                with page.expect_download(timeout=20_000) as info:
+                with page.expect_download(timeout=8_000) as info:
                     page.get_by_role('menuitem',name=re.compile(r'download anyway',re.I)).click()
                 d=info.value; target=a.output/f'{index+1:04d}_{re.sub(r"[^a-zA-Z0-9_-]+","_",d.suggested_filename)[:80]}'
                 d.save_as(str(target)); downloaded.append(target.name); time.sleep(max(0,a.delay))
