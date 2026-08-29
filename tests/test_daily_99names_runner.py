@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from core.md_subject_parser import load_subject_document
 from core.setup_database import initialize_database
 from core.database import connect_database
-from playbooks.daily_99names_runner import next_open_subject, validate_contract
+from playbooks.daily_99names_runner import next_open_subject, validate_contract, finalize_download
 
 
 class Daily99NamesRunnerTests(unittest.TestCase):
@@ -47,6 +48,14 @@ class Daily99NamesRunnerTests(unittest.TestCase):
                 connection.execute("INSERT INTO nightcafe_daily_runs(run_date,name_sequence,status,output_path) VALUES ('2020-01-01',1,'COMPLETED','/missing.jpg')")
                 connection.commit()
             self.assertEqual(next_open_subject(db, document).sequence, 1)
+
+    def test_invalid_download_stops_before_overlay(self) -> None:
+        class Args:
+            date = "2099-01-03"; sequence = 1; overlay_font_size = 64; db = Path("/tmp/unused.db")
+        class Subject: sequence = 1; title = "First"; context = "One"
+        with patch("playbooks.daily_99names_runner.validate_image_file", side_effect=RuntimeError("placeholder")):
+            with self.assertRaisesRegex(RuntimeError, "placeholder"):
+                finalize_download(Path("/tmp/placeholder.png"), Subject(), Args())
 
 
 if __name__ == "__main__":

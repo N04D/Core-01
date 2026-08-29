@@ -27,6 +27,7 @@ from core.setup_database import initialize_database
 from core.md_subject_parser import SubjectDocument, load_subject_document
 from plugins.media.nightcafe_automation import (
     safe_stem,
+    validate_image_file,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -177,6 +178,17 @@ def mark_run(db_path: Path, subject, args: argparse.Namespace, *, prompt: str, s
         db.commit()
 
 
+def finalize_download(raw: Path, subject, args: argparse.Namespace) -> tuple[Path, int]:
+    """Validate a completed download, then apply and register its overlay."""
+    validate_image_file(raw)
+    FINAL_DIR.mkdir(parents=True, exist_ok=True)
+    final = FINAL_DIR / f"{args.date}_{subject.sequence:02d}_{safe_stem(subject.title)}.jpg"
+    caption = "\n".join((subject.title, subject.title, subject.context or subject.title))
+    from plugins.media.image_overlay import apply_overlay, register_overlay
+    apply_overlay(raw, final, text=caption, font_size=args.overlay_font_size)
+    return final, register_overlay(args.db, final, caption)
+
+
 def main() -> int:
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
     args = parse_args()
@@ -200,12 +212,7 @@ def main() -> int:
             raise FileNotFoundError(f"NightCafe output missing: {raw}")
         if raw_result.get("status") == "SIMULATED":
             ensure_simulated_source(raw, subject.title)
-        FINAL_DIR.mkdir(parents=True, exist_ok=True)
-        final = FINAL_DIR / f"{args.date}_{subject.sequence:02d}_{safe_stem(subject.title)}.jpg"
-        caption = "\n".join((subject.title, subject.title, subject.context or subject.title))
-        from plugins.media.image_overlay import apply_overlay, register_overlay
-        apply_overlay(raw, final, text=caption, font_size=args.overlay_font_size)
-        asset_id = register_overlay(args.db, final, caption)
+        final, asset_id = finalize_download(raw, subject, args)
         status = "SIMULATED" if raw_result.get("status") == "SIMULATED" else "COMPLETED"
         mark_run(args.db, subject, args, prompt=prompt, status=status, output=final, asset_id=asset_id)
         print(json.dumps({"status": status, "sequence": subject.sequence, "name": subject.title, "raw": str(raw), "output": str(final), "asset_id": asset_id}, ensure_ascii=False))
