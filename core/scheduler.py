@@ -1,6 +1,7 @@
 """SQLite-backed scheduler for recurring playbook jobs."""
 from __future__ import annotations
 import calendar, json
+import threading, time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from core.database import connect_database
@@ -28,3 +29,16 @@ def dispatch_due_jobs(db_path: str | Path, *, now: datetime | None = None, limit
             db.execute("UPDATE scheduled_jobs SET last_run_at=?,next_run_at=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (now_iso, nxt.isoformat(timespec="seconds") if nxt else None, "ACTIVE" if nxt else "COMPLETED", row["id"]))
         db.commit()
     return dispatched
+
+def start_scheduler(db_path: str | Path, interval: float = 30.0) -> threading.Thread:
+    """Start a daemon thread that dispatches due jobs into events_queue."""
+    def loop() -> None:
+        while True:
+            try: dispatch_due_jobs(db_path)
+            except Exception:
+                # The dashboard must remain available if a transient DB lock occurs.
+                pass
+            time.sleep(max(1.0, interval))
+    thread = threading.Thread(target=loop, name="sqlite-job-scheduler", daemon=True)
+    thread.start()
+    return thread

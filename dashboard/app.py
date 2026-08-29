@@ -83,6 +83,8 @@ def create_app(database_path: Path | None = None) -> Flask:
     app.config["MAX_CONTENT_LENGTH"] = int(
         os.getenv("DASHBOARD_MAX_UPLOAD_BYTES", str(100 * 1024 * 1024))
     )
+    from core.scheduler import start_scheduler
+    app.extensions["job_scheduler"] = start_scheduler(app.config["DATABASE"], float(os.getenv("SCHEDULER_INTERVAL_SECONDS", "30")))
 
     def connect() -> sqlite3.Connection:
         return connect_database(app.config["DATABASE"], timeout=10.0)
@@ -575,6 +577,13 @@ def create_app(database_path: Path | None = None) -> Flask:
             cur = connection.execute("UPDATE scheduled_jobs SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (status, job_id)); connection.commit()
         if cur.rowcount != 1: abort(404)
         return jsonify({"id": job_id, "status": status})
+
+    @app.delete("/api/jobs/<int:job_id>")
+    def delete_job(job_id: int) -> Any:
+        with connect() as connection:
+            cur = connection.execute("DELETE FROM scheduled_jobs WHERE id=?", (job_id,)); connection.commit()
+        if cur.rowcount != 1: abort(404)
+        return jsonify({"deleted": job_id})
 
     @app.get("/api/media")
     def media_library() -> Any:
