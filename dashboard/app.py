@@ -667,6 +667,10 @@ def create_app(database_path: Path | None = None) -> Flask:
             output = output_dir / f"ui_{job_id}.png"
             command = [sys.executable, str(PROJECT_ROOT / "plugins/media/nightcafe_automation.py"), "--db", app.config["DATABASE"], "--prompt", prompt, "--name", "UI Generation", "--sequence", "1", "--run-date", datetime.now(timezone.utc).date().isoformat(), "--output-dir", str(output_dir)]
             command.append("--simulate" if body.get("simulate", False) else "--live")
+            if not body.get("simulate", False):
+                # The dashboard must reuse the human-authenticated browser tab;
+                # otherwise the plugin starts a fresh context and Cloudflare blocks it.
+                command += ["--cdp-url", os.getenv("NIGHTCAFE_CDP_URL", "http://127.0.0.1:9222")]
             if body.get("model"): command += ["--model", str(body["model"])]
             if body.get("format"): command += ["--format", str(body["format"])]
             if body.get("negative_prompt"): command += ["--negative-prompt", str(body["negative_prompt"])]
