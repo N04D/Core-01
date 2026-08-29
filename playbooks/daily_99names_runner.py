@@ -184,8 +184,14 @@ def finalize_download(raw: Path, subject, args: argparse.Namespace) -> tuple[Pat
     FINAL_DIR.mkdir(parents=True, exist_ok=True)
     final = FINAL_DIR / f"{args.date}_{subject.sequence:02d}_{safe_stem(subject.title)}.jpg"
     caption = "\n".join((subject.title, subject.title, subject.context or subject.title))
+    format_config = None
+    with connect_database(args.db) as db:
+        row = db.execute("SELECT * FROM overlay_formats ORDER BY is_default DESC,id ASC LIMIT 1").fetchone()
+        if row:
+            try: format_config = json.loads(row["line_settings"] or "[]")
+            except (TypeError, json.JSONDecodeError): format_config = None
     from plugins.media.image_overlay import apply_overlay, register_overlay
-    apply_overlay(raw, final, text=caption, font_size=args.overlay_font_size)
+    apply_overlay(raw, final, text=caption, font_size=args.overlay_font_size, line_settings=format_config)
     return final, register_overlay(args.db, final, caption)
 
 

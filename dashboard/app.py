@@ -946,6 +946,8 @@ def create_app(database_path: Path | None = None) -> Flask:
         with connect() as connection:
             try:
                 cur = connection.execute("INSERT INTO overlay_formats(name,lines,title_size,subtitle_size,position,border,x_percent,y_percent,line_settings) VALUES (?,?,?,?,?,?,?,?,?)", (name, json.dumps(lines, ensure_ascii=False), title_size, subtitle_size, position, border, x_percent, y_percent, json.dumps(line_settings, ensure_ascii=False))); connection.commit()
+                if connection.execute("SELECT COUNT(*) FROM overlay_formats WHERE is_default=1").fetchone()[0] == 0:
+                    connection.execute("UPDATE overlay_formats SET is_default=1 WHERE id=?", (cur.lastrowid,)); connection.commit()
             except sqlite3.IntegrityError: abort(409, description="formatnaam bestaat al")
         return jsonify({"id": cur.lastrowid, "name": name}), 201
 

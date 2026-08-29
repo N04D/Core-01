@@ -57,7 +57,8 @@ def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
 
 
 def apply_overlay(input_path: Path, output_path: Path, *, text: str = "", border: int = 24,
-                  font_size: int = 34, text_color: str = "#f7f2e8", border_color: str = "#b79b68") -> Path:
+                  font_size: int = 34, text_color: str = "#f7f2e8", border_color: str = "#b79b68",
+                  line_settings: list[dict] | None = None) -> Path:
     """Render one image with a restrained border and optional caption."""
     if border < 0 or font_size < 8:
         raise ValueError("border must be non-negative and font_size at least 8")
@@ -69,7 +70,21 @@ def apply_overlay(input_path: Path, output_path: Path, *, text: str = "", border
         image = ImageOps.exif_transpose(source).convert("RGB")
     if border:
         image = ImageOps.expand(image, border=border, fill=border_color)
-    if text.strip():
+    if text.strip() and line_settings:
+        image = image.convert("RGBA")
+        draw = ImageDraw.Draw(image, "RGBA")
+        lines = [line.strip() for line in text.splitlines()]
+        for index, value in enumerate(lines):
+            if not value: continue
+            config = line_settings[index] if index < len(line_settings) else {}
+            size = max(8, int(config.get("font_size", font_size)))
+            font = _font(size)
+            x = max(0, min(100, int(config.get("x_percent", 50)))) / 100 * image.width
+            y = max(0, min(100, int(config.get("y_percent", 50)))) / 100 * image.height
+            bbox = draw.textbbox((0, 0), value, font=font)
+            draw.text((x + 3 - (bbox[2]-bbox[0])/2, y + 3 - (bbox[3]-bbox[1])/2), value, font=font, fill=(0,0,0,150))
+            draw.text((x - (bbox[2]-bbox[0])/2, y - (bbox[3]-bbox[1])/2), value, font=font, fill=text_color)
+    elif text.strip():
         image = image.convert("RGBA")
         draw = ImageDraw.Draw(image, "RGBA")
         # Fit and center every line as a single typographic block.  This avoids
