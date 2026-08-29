@@ -19,15 +19,22 @@ def register(db: Path):
     with connect_database(db) as c:
         c.execute("INSERT INTO plugin_registry(plugin_name,type,executable_path,icon,is_active) VALUES (?,?,?,?,1) ON CONFLICT(plugin_name) DO UPDATE SET executable_path=excluded.executable_path,is_active=1",('Suno Personal Backup','io',str(Path(__file__).resolve()),'🎵')); c.execute("INSERT INTO event_routes(event_type,target_plugin_name) VALUES (?,?) ON CONFLICT(event_type) DO UPDATE SET target_plugin_name=excluded.target_plugin_name",('SUNO_BACKUP','Suno Personal Backup')); c.commit()
 def args():
-    p=argparse.ArgumentParser(description=__doc__); p.add_argument('--register',action='store_true'); p.add_argument('--backup',action='store_true'); p.add_argument('--db',type=Path,default=DEFAULT_DB); p.add_argument('--auth',type=Path,default=DEFAULT_AUTH); p.add_argument('--url',default='https://suno.com/library'); p.add_argument('--output',type=Path,default=OUT); p.add_argument('--delay',type=float,default=1.0); return p.parse_args()
+    p=argparse.ArgumentParser(description=__doc__); p.add_argument('--register',action='store_true'); p.add_argument('--backup',action='store_true'); p.add_argument('--db',type=Path,default=DEFAULT_DB); p.add_argument('--auth',type=Path,default=DEFAULT_AUTH); p.add_argument('--cdp-url',default=os.getenv('SUNO_CDP_URL')); p.add_argument('--url',default='https://suno.com/library'); p.add_argument('--output',type=Path,default=OUT); p.add_argument('--delay',type=float,default=1.0); return p.parse_args()
 def main():
     a=args(); a.db=a.db.resolve(); register(a.db)
     if a.register and not a.backup: print(json.dumps({'status':'REGISTERED','plugin':'Suno Personal Backup'})); return 0
     if not a.backup: raise SystemExit('use --backup to download your own Suno library')
-    auth=auth_file(a.auth); a.output.mkdir(parents=True,exist_ok=True)
+    if not a.cdp_url: auth=auth_file(a.auth)
+    a.output.mkdir(parents=True,exist_ok=True)
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
-        browser=p.chromium.launch(headless=True); context=browser.new_context(storage_state=str(auth)); page=context.new_page(); page.goto(a.url,wait_until='domcontentloaded',timeout=60_000); page.wait_for_timeout(2_000)
+        if a.cdp_url:
+            browser=p.chromium.connect_over_cdp(a.cdp_url); context=browser.contexts[0]; pages=[x for x in context.pages if 'suno.com' in x.url]
+            page=pages[0] if pages else context.new_page();
+            if 'suno.com' not in page.url: page.goto(a.url,wait_until='domcontentloaded',timeout=60_000)
+        else:
+            browser=p.chromium.launch(headless=True); context=browser.new_context(storage_state=str(auth)); page=context.new_page(); page.goto(a.url,wait_until='domcontentloaded',timeout=60_000)
+        page.wait_for_timeout(2_000)
         links=page.locator("a[href*='.mp3'],a[href*='.wav'],audio[src],a[download]"); urls=[]
         for i in range(links.count()):
             node=links.nth(i); u=node.get_attribute('href') or node.get_attribute('src');
