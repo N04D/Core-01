@@ -308,7 +308,7 @@ document.getElementById('dlq-filter').onclick=loadDLQ;
 document.getElementById('schedule-form').onsubmit=createSchedule;
 document.getElementById('job-form').onsubmit=createJob;
 document.getElementById('nightcafe-form').onsubmit=startNightCafe;
-document.getElementById('media-store-grid').addEventListener('dblclick',event=>{const button=event.target.closest('button[role="option"]');if(!button)return;const card=button.closest('article'),cards=[...document.querySelectorAll('#media-store-grid article')],index=cards.indexOf(card);if(index>=0)openMediaModal(state.mediaStore.assets[index]?.id)});
+document.getElementById('media-store-grid').addEventListener('dblclick',event=>{const card=event.target.closest('#media-store-grid article');if(!card)return;const cards=[...document.querySelectorAll('#media-store-grid article')],index=cards.indexOf(card);if(index>=0)openMediaModal(state.mediaStore.assets[index]?.id)});
 document.getElementById('media-modal-close').onclick=closeMediaModal;document.getElementById('media-modal').addEventListener('click',event=>{if(event.target.id==='media-modal')closeMediaModal()});document.addEventListener('keydown',event=>{if(event.key==='Escape')closeMediaModal()});
 document.getElementById('draft-search').oninput=renderAgendaDrafts;
 document.getElementById('edit-selected-draft').onclick=editSelectedDraft;
