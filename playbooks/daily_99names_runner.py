@@ -208,7 +208,7 @@ def main() -> int:
     try:
         raw_result = run_nightcafe(args, subject, prompt)
         raw = Path(raw_result["output_path"]).resolve()
-        if not raw.is_file():
+        if not raw.is_file() or raw.stat().st_size <= 256:
             raise FileNotFoundError(f"NightCafe output missing: {raw}")
         if raw_result.get("status") == "SIMULATED":
             ensure_simulated_source(raw, subject.title)

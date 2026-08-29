@@ -72,15 +72,27 @@ def apply_overlay(input_path: Path, output_path: Path, *, text: str = "", border
     if text.strip():
         image = image.convert("RGBA")
         draw = ImageDraw.Draw(image, "RGBA")
-        font = _font(font_size)
-        bbox = draw.textbbox((0, 0), text.strip(), font=font)
+        # Fit and center every line as a single typographic block.  This avoids
+        # Pillow's default top-left placement and keeps Arabic/transliteration
+        # readable on both portrait and landscape assets.
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        size = font_size
+        while size > 12:
+            font = _font(size)
+            bbox = draw.multiline_textbbox((0, 0), "\n".join(lines), font=font, spacing=max(6, size // 5), align="center")
+            if bbox[2] - bbox[0] <= image.width * 0.86:
+                break
+            size -= 2
+        spacing = max(6, size // 5)
+        bbox = draw.multiline_textbbox((0, 0), "\n".join(lines), font=font, spacing=spacing, align="center")
         text_width = bbox[2] - bbox[0]
         text_height = bbox[3] - bbox[1]
         text_x = (image.width - text_width) // 2 - bbox[0]
         text_y = (image.height - text_height) // 2 - bbox[1]
         # Centered title: no opaque banner, only a restrained shadow for contrast.
-        draw.text((text_x + 3, text_y + 3), text.strip(), font=font, fill=(0, 0, 0, 150))
-        draw.text((text_x, text_y), text.strip(), font=font, fill=text_color)
+        block = "\n".join(lines)
+        draw.multiline_text((text_x + 3, text_y + 3), block, font=font, spacing=spacing, align="center", fill=(0, 0, 0, 150))
+        draw.multiline_text((text_x, text_y), block, font=font, spacing=spacing, align="center", fill=text_color)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if output_path.suffix.lower() in {".jpg", ".jpeg"}:
         image.convert("RGB").save(output_path, quality=95)
