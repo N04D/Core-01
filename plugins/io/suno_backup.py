@@ -30,11 +30,13 @@ def main():
     with sync_playwright() as p:
         if a.cdp_url:
             browser=p.chromium.connect_over_cdp(a.cdp_url); context=browser.contexts[0]; pages=[x for x in context.pages if 'suno.com' in x.url]
-            page=pages[0] if pages else context.new_page();
-            if 'suno.com' not in page.url: page.goto(a.url,wait_until='domcontentloaded',timeout=60_000)
+            page=next((x for x in pages if any(part in x.url for part in ('/library','/me','/studio'))), None) or context.new_page()
+            if not any(part in page.url for part in ('/library','/me','/studio')): page.goto(a.url,wait_until='domcontentloaded',timeout=60_000)
         else:
             browser=p.chromium.launch(headless=True); context=browser.new_context(storage_state=str(auth)); page=context.new_page(); page.goto(a.url,wait_until='domcontentloaded',timeout=60_000)
         page.wait_for_timeout(2_000)
+        body_text=page.locator('body').inner_text(timeout=5000).casefold()
+        if 'log in' in body_text or 'join suno' in body_text: raise PermissionError('Suno session is not authenticated on the selected library page')
         links=page.locator("a[href*='.mp3'],a[href*='.wav'],audio[src],a[download]"); urls=[]
         for i in range(links.count()):
             node=links.nth(i); u=node.get_attribute('href') or node.get_attribute('src');
