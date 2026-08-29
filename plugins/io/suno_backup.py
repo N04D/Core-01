@@ -37,10 +37,18 @@ def main():
         page.wait_for_timeout(2_000)
         body_text=page.locator('body').inner_text(timeout=5000).casefold()
         if 'log in' in body_text or 'join suno' in body_text: raise PermissionError('Suno session is not authenticated on the selected library page')
-        links=page.locator("a[href*='.mp3'],a[href*='.wav'],audio[src],a[download]"); urls=[]
-        for i in range(links.count()):
-            node=links.nth(i); u=node.get_attribute('href') or node.get_attribute('src');
-            if u and re.search(r'\.(mp3|wav|m4a|flac)(?:\?|$)',u,re.I) and u not in urls: urls.append(u)
+        urls=[]
+        for _ in range(40):
+            links=page.locator("a[href*='.mp3'],a[href*='.wav'],audio[src],source[src],a[download]")
+            for i in range(links.count()):
+                node=links.nth(i); u=node.get_attribute('href') or node.get_attribute('src')
+                if u and re.search(r'\.(mp3|wav|m4a|flac)(?:\?|$)',u,re.I) and u not in urls: urls.append(u)
+            try:
+                more=page.get_by_role('button',name=re.compile(r'load more|show more|next',re.I))
+                if more.count() and more.last.is_visible(): more.last.click(timeout=1500)
+            except Exception: pass
+            page.mouse.wheel(0, 1800); page.wait_for_timeout(700)
+            if not page.locator("a[href*='.mp3'],a[href*='.wav'],audio[src],source[src]").count() and _ > 2: break
         if not urls: raise RuntimeError('No audio links found; verify Suno login/session and library URL')
         results=[]
         for i,u in enumerate(urls,1):
