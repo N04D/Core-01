@@ -395,6 +395,13 @@ def initialize_database(database_path: Path) -> None:
             connection.execute(statement)
             LOGGER.info("Table '%s' checked or created successfully.", table_name)
 
+        # Additive migration for overlay format positioning on existing installs.
+        overlay_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(overlay_formats)")}
+        if "x_percent" not in overlay_columns:
+            connection.execute("ALTER TABLE overlay_formats ADD COLUMN x_percent INTEGER NOT NULL DEFAULT 50")
+        if "y_percent" not in overlay_columns:
+            connection.execute("ALTER TABLE overlay_formats ADD COLUMN y_percent INTEGER NOT NULL DEFAULT 50")
+
         for statement in INDEXES:
             connection.execute(statement)
         LOGGER.info("Database indexes checked or created successfully.")
