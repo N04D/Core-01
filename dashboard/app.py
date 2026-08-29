@@ -940,9 +940,12 @@ def create_app(database_path: Path | None = None) -> Flask:
             x_percent = max(0, min(100, int(body.get("x_percent", 50))))
             y_percent = max(0, min(100, int(body.get("y_percent", 50))))
         except (TypeError, ValueError): abort(400, description="positie moet numeriek zijn")
+        line_settings = body.get("line_settings", [])
+        if not isinstance(line_settings, list) or len(line_settings) > 3 or any(not isinstance(item, dict) for item in line_settings):
+            abort(400, description="line_settings moet een lijst zijn")
         with connect() as connection:
             try:
-                cur = connection.execute("INSERT INTO overlay_formats(name,lines,title_size,subtitle_size,position,border,x_percent,y_percent) VALUES (?,?,?,?,?,?,?,?)", (name, json.dumps(lines, ensure_ascii=False), title_size, subtitle_size, position, border, x_percent, y_percent)); connection.commit()
+                cur = connection.execute("INSERT INTO overlay_formats(name,lines,title_size,subtitle_size,position,border,x_percent,y_percent,line_settings) VALUES (?,?,?,?,?,?,?,?,?)", (name, json.dumps(lines, ensure_ascii=False), title_size, subtitle_size, position, border, x_percent, y_percent, json.dumps(line_settings, ensure_ascii=False))); connection.commit()
             except sqlite3.IntegrityError: abort(409, description="formatnaam bestaat al")
         return jsonify({"id": cur.lastrowid, "name": name}), 201
 

@@ -137,7 +137,8 @@ SCHEMA: Final[dict[str, str]] = {
             border INTEGER NOT NULL DEFAULT 24,
             is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0,1)),
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            line_settings JSON NOT NULL DEFAULT '[]' CHECK (json_valid(line_settings))
         )
     """,
     "media_links": """
@@ -401,6 +402,8 @@ def initialize_database(database_path: Path) -> None:
             connection.execute("ALTER TABLE overlay_formats ADD COLUMN x_percent INTEGER NOT NULL DEFAULT 50")
         if "y_percent" not in overlay_columns:
             connection.execute("ALTER TABLE overlay_formats ADD COLUMN y_percent INTEGER NOT NULL DEFAULT 50")
+        if "line_settings" not in overlay_columns:
+            connection.execute("ALTER TABLE overlay_formats ADD COLUMN line_settings JSON NOT NULL DEFAULT '[]'")
 
         for statement in INDEXES:
             connection.execute(statement)
