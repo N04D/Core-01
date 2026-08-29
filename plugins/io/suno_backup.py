@@ -49,7 +49,21 @@ def main():
             except Exception: pass
             page.mouse.wheel(0, 1800); page.wait_for_timeout(700)
             if not page.locator("a[href*='.mp3'],a[href*='.wav'],audio[src],source[src]").count() and _ > 2: break
-        if not urls: raise RuntimeError('No audio links found; verify Suno login/session and library URL')
+        # Suno exposes downloads through the per-song … menu rather than stable
+        # audio URLs. Execute the documented UI flow for each visible song.
+        menus=page.get_by_role('button',name=re.compile(r'more options',re.I)); downloaded=[]
+        for index in range(menus.count()):
+            try:
+                menus.nth(index).click(); page.get_by_role('menuitem',name='Download').click(); page.wait_for_timeout(200)
+                if page.get_by_role('menuitem',name=re.compile(r'^MP3$',re.I)).count(): page.get_by_role('menuitem',name=re.compile(r'^MP3$',re.I)).click()
+                with page.expect_download(timeout=20_000) as info:
+                    page.get_by_role('menuitem',name=re.compile(r'download anyway',re.I)).click()
+                d=info.value; target=a.output/f'{index+1:04d}_{re.sub(r"[^a-zA-Z0-9_-]+","_",d.suggested_filename)[:80]}'
+                d.save_as(str(target)); downloaded.append(target.name); time.sleep(max(0,a.delay))
+            except Exception: page.keyboard.press('Escape')
+        if downloaded:
+            print(json.dumps({'status':'COMPLETED','downloaded':len(downloaded),'output':str(a.output),'files':downloaded},ensure_ascii=False)); browser.close(); return 0
+        if not urls: raise RuntimeError('No Suno downloads found; verify the account library is open')
         results=[]
         for i,u in enumerate(urls,1):
             name=Path(urlparse(u).path).stem or f'suno_{i:04d}'; target=a.output/f'{i:04d}_{re.sub(r"[^a-zA-Z0-9_-]+","_",name)[:80]}.mp3'; response=context.request.get(u,timeout=120_000)
