@@ -107,3 +107,12 @@ De session-health daemon controleert actieve LinkedIn-, Substack- en Medium-publ
 - Unieke artifactnamen en atomische bestandswrites waar relevant.
 - Screenshots bij browserautomatiseringsfouten.
 - Read-only databaseverbinding voor het statusdashboard.
+
+## Sessies en dashboard-authenticatie
+
+`dashboard/authenticate.py` kan via Chrome DevTools Protocol (standaard
+`http://127.0.0.1:9222`) een bestaande tab voor LinkedIn, Substack of Medium
+overnemen. De helper zoekt op domein, controleert bekende sessiecookies en schrijft
+Playwright storage-state atomisch met mode `0600` naar `config/*_auth.json`.
+Het dashboard toont de actuele bestandsstatus live; de Home-actie **Connect sessie**
+opent eerst de plugininstellingen en voorkomt dubbele loginprocessen.

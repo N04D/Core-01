@@ -70,6 +70,9 @@ Playwright-publisher voor profielposts. Ondersteunt headed/headless uitvoering, 
 - Eventtype: `PUBLISH_LINKEDIN`
 - Auth: `config/linkedin_auth.json`, mode `0600`
 
+Deze legacy-plugin blijft beschikbaar voor compatibiliteit maar hoort in productie
+uitgeschakeld te zijn wanneer de Pro-plugin actief is.
+
 ### LinkedIn Pro Publisher & Analytics
 
 Bestand: `plugins/channels/pub_linkedin_pro.py`
@@ -141,3 +144,8 @@ de eventpayload geschreven met `medium_contacted: false` en status
 ```
 
 Routes kunnen idempotent via SQLite worden beheerd. Controleer ze met `scripts/system_status.py` voordat een productieflow start.
+
+De oudere **Substack Publisher**-registratie is legacy; activeer slechts één
+Substack-route tegelijk om dubbele dashboardkaarten te voorkomen. De actieve
+Pro-route gebruikt `config/substack_auth.json` en kan via de gedeelde Chrome-CDP
+sessie worden gekoppeld.

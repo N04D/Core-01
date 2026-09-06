@@ -39,6 +39,21 @@ mkdir -p config
 chmod 600 config/linkedin_auth.json
 ```
 
+## Sessies koppelen vanuit Chrome
+
+Start Chrome met remote debugging en een persistent profiel, open de gewenste
+LinkedIn-, Substack- of Medium-tab en kies in het dashboard **Connect sessie**.
+Rechtstreeks kan dezelfde flow met:
+
+```bash
+./venv/bin/python3 dashboard/authenticate.py \
+  --platform substack \
+  --auth-file config/substack_auth.json \
+  --cdp-url http://127.0.0.1:9222
+```
+
+Sessies worden uitsluitend als storage-state opgeslagen met bestandsrechten `0600`.
+
 Storage-state bevat sessiegeheimen. Deel of commit dit bestand niet. Bij een verlopen sessie moet het opnieuw worden gegenereerd.
 
 ## systemd
@@ -75,6 +90,7 @@ journalctl -u social-worker -u social-watchdog -f
 - [ ] De volledige venv staat onder `/home/infra/dev/venv`.
 - [ ] `.env` bevat uitsluitend noodzakelijke configuratie en heeft beperkte rechten.
 - [ ] `config/linkedin_auth.json` heeft mode `0600` wanneer live LinkedIn actief is.
+- [ ] Substack/Medium-sessies zijn via CDP gekoppeld wanneer die kanalen actief zijn.
 - [ ] `vault/`, `db/` en logmappen zijn schrijfbaar voor `infra`.
 - [ ] Mocktests slagen vóór live publicatie wordt ingeschakeld.
 - [ ] Dead-letter queue en screenshots worden operationeel gemonitord.

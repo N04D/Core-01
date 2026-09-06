@@ -14,10 +14,11 @@ Dit project bouwt een soeverein, lokaal AI-besturingssysteem voor Linux op een R
 - Firecrawl-research, mock-publicatie en LinkedIn-kanalen.
 - Master-playbooks voor research → generatie → publicatie.
 - Read-only statusdashboard, integratietests en systemd-units.
+- Beveiligde browsersessie-koppeling via Chrome CDP voor actieve social-kanalen.
 
 ## Huidige status
 
-De lokale mockketen is end-to-end getest: een bestand in `vault/uitgaand/` wordt gedetecteerd, gearchiveerd, als event geclaimd en gepubliceerd via het mockkanaal. LinkedIn ondersteunt veilige dry-runs en een auth-loze mockfallback. Live LinkedIn-gebruik vereist een geldige, lokaal opgeslagen Playwright storage-state.
+De lokale mockketen is end-to-end getest: een bestand in `vault/uitgaand/` wordt gedetecteerd, gearchiveerd, als event geclaimd en gepubliceerd via het mockkanaal. LinkedIn ondersteunt veilige dry-runs en een auth-loze mockfallback. Live LinkedIn- en Substack-gebruik gebruikt geldige, lokaal opgeslagen Playwright storage-states. De dashboardknop **Connect sessie** neemt een bestaande Chrome-tab over; wachtwoorden worden niet in de UI bewaard.
 
 ## Belangrijke locaties
 
