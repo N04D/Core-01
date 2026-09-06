@@ -19,6 +19,7 @@ from werkzeug.utils import secure_filename
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.database import connect_database
+from core.keyring_store import set_secret
 
 
 PROJECT_ROOT: Final = Path(__file__).resolve().parent.parent
@@ -72,6 +73,7 @@ AUTH_PROFILES: Final = {
     },
 }
 NIGHTCAFE_JOBS: dict[str, dict[str, Any]] = {}
+AUTH_PROCESSES: dict[str, subprocess.Popen[Any]] = {}
 
 
 def create_app(database_path: Path | None = None) -> Flask:
@@ -412,12 +414,35 @@ def create_app(database_path: Path | None = None) -> Flask:
 
     @app.get("/api/session-health")
     def session_health() -> Any:
+        # The health daemon may run infrequently; derive the displayed status
+        # from the auth file on every request so a freshly captured session is
+        # immediately reflected on Home.
         with connect() as connection:
-            rows = connection.execute(
-                """SELECT platform,plugin_name,auth_file,status,detail,checked_at
-                     FROM session_health ORDER BY platform"""
+            plugins = connection.execute(
+                "SELECT plugin_name FROM plugin_registry WHERE is_active=1 ORDER BY plugin_name"
             ).fetchall()
-        return jsonify([dict(row) for row in rows])
+            checked = {
+                row["plugin_name"]: dict(row)
+                for row in connection.execute(
+                    "SELECT plugin_name,checked_at FROM session_health"
+                ).fetchall()
+            }
+        result = []
+        for plugin in plugins:
+            name = plugin["plugin_name"]
+            profile = AUTH_PROFILES.get(name)
+            if profile is None:
+                continue
+            auth = auth_status(name)
+            result.append({
+                "platform": profile["platform"],
+                "plugin_name": name,
+                "auth_file": str(profile["auth_file"]),
+                "status": auth["status"],
+                "detail": auth["message"],
+                "checked_at": checked.get(name, {}).get("checked_at"),
+            })
+        return jsonify(result)
 
     @app.get("/api/notifications")
     def notifications() -> Any:
@@ -1017,6 +1042,10 @@ def create_app(database_path: Path | None = None) -> Flask:
 
         auth_file = Path(profile["auth_file"])
         auth_file.parent.mkdir(parents=True, exist_ok=True)
+        existing = AUTH_PROCESSES.get(plugin_name)
+        if existing is not None and existing.poll() is None:
+            return jsonify({"started": True, "pid": existing.pid, "already_running": True,
+                            "message": "Loginbrowser draait al. Rond de login af in het bestaande venster."}), 202
         helper = Path(__file__).resolve().parent / "authenticate.py"
         command = [
             sys.executable,
@@ -1026,6 +1055,14 @@ def create_app(database_path: Path | None = None) -> Flask:
             "--auth-file",
             str(auth_file),
         ]
+        # Session capture should reuse the user's already-open Chrome tab.
+        # A CDP URL can be overridden for remote hosts; localhost is the
+        # standard browser service used by this installation.
+        cdp_url = os.getenv("BROWSER_CDP_URL") or os.getenv("LINKEDIN_CDP_URL")
+        # All browser-backed plugins share the managed Chrome session.
+        cdp_url = cdp_url or "http://127.0.0.1:9222"
+        if cdp_url:
+            command.extend(["--cdp-url", cdp_url])
         try:
             process = subprocess.Popen(
                 command,
@@ -1038,6 +1075,7 @@ def create_app(database_path: Path | None = None) -> Flask:
             )
         except OSError as exc:
             return jsonify({"error": f"Loginbrowser kon niet starten: {exc}"}), 503
+        AUTH_PROCESSES[plugin_name] = process
         return (
             jsonify(
                 {
@@ -1049,6 +1087,24 @@ def create_app(database_path: Path | None = None) -> Flask:
             ),
             202,
         )
+
+    @app.post("/api/plugins/<path:plugin_name>/credentials")
+    def store_plugin_credentials(plugin_name: str) -> Any:
+        """Store username/password in the OS keyring; never persist plaintext."""
+        with connect() as connection:
+            active_plugin(connection, plugin_name)
+        if plugin_name not in {"LinkedIn Pro Publisher & Analytics", "LinkedIn Publisher (Productie)"}:
+            abort(409, description="Credentialopslag is momenteel alleen beschikbaar voor LinkedIn")
+        body = request.get_json(silent=True) or {}
+        username, password = str(body.get("username", "")).strip(), str(body.get("password", ""))
+        if not username or not password:
+            abort(400, description="gebruikersnaam en wachtwoord zijn verplicht")
+        try:
+            set_secret("linkedin.username", username)
+            set_secret("linkedin.password", password)
+        except (RuntimeError, ValueError) as exc:
+            return jsonify({"error": str(exc)}), 503
+        return jsonify({"stored": True, "message": "LinkedIn-gegevens veilig opgeslagen in de OS-keyring."})
 
     @app.get("/api/plugin-stats")
     def plugin_stats() -> Any:

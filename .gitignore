@@ -8,9 +8,12 @@ __pycache__/
 config/linkedin_auth.json
 config/gdrive_auth.json
 config/nightcafe_auth.json
+config/*_auth.json
 config/.nightcafe_auth.json.swp
 linkedin_auth.json
 auth.json
+key.txt
+key.txt.pub
 
 # Runtime database and browser diagnostics
 db/*.db

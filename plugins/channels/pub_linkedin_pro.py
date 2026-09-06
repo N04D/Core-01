@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import logging
 import os
@@ -25,6 +26,7 @@ from core.browser_robustness import (
     capture_sanitized_diagnostic, find_with_accessible_fallbacks,
     verify_submission,
 )
+from core.keyring_store import set_secret
 
 
 PLUGIN_NAME: Final = "LinkedIn Pro Publisher & Analytics"
@@ -49,6 +51,11 @@ def parse_args() -> argparse.Namespace:
         description="LinkedIn Pro publishing, analytics, and profile context plugin."
     )
     parser.add_argument("--register", action="store_true")
+    parser.add_argument(
+        "--store-credentials", action="store_true",
+        help="Interactively store LinkedIn username and password in the OS keyring.",
+    )
+    parser.add_argument("--username", help="Username for --store-credentials.")
     parser.add_argument("--event_id", type=int)
     parser.add_argument("--db", type=Path, default=DEFAULT_DATABASE)
     modes = parser.add_mutually_exclusive_group()
@@ -73,6 +80,7 @@ def parse_args() -> argparse.Namespace:
     if not any(
         (
             args.register,
+            args.store_credentials,
             args.event_id is not None,
             args.analytics,
             args.fetch_bio,
@@ -519,6 +527,22 @@ def main() -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     args = parse_args()
+    if args.store_credentials:
+        try:
+            username = (args.username or input("LinkedIn gebruikersnaam/e-mail: ")).strip()
+            if not username:
+                raise ValueError("gebruikersnaam is verplicht")
+            password = getpass.getpass("LinkedIn wachtwoord (niet zichtbaar): ")
+            if not password:
+                raise ValueError("wachtwoord is verplicht")
+            set_secret("linkedin.username", username)
+            set_secret("linkedin.password", password)
+            print(json.dumps({"status": "CREDENTIALS_STORED", "account": "linkedin"}))
+            if not (args.register or args.event_id or args.analytics or args.fetch_bio or args.text or args.image_path or args.video_path):
+                return 0
+        except Exception as exc:
+            LOGGER.error("Unable to store LinkedIn credentials in OS keyring: %s", exc)
+            return 1
     database = args.db.expanduser().resolve()
     event_payload: dict[str, Any] = {}
     ledger_started = False
