@@ -273,6 +273,31 @@ def git(repo: Path, *args: str, timeout: float = 60.0, check: bool = True) -> st
     return output if result.returncode == 0 else None
 
 
+def git_bytes(repo: Path, *args: str, timeout: float = 60.0, check: bool = True) -> bytes | None:
+    result = subprocess.run(["git", *args], cwd=str(repo), shell=False, capture_output=True, timeout=timeout, check=False)
+    if result.returncode and check:
+        detail = (result.stderr or result.stdout).decode(errors="replace").strip()[:2000]
+        raise MarkdownGitError(f"git {' '.join(args[:2])} failed: {detail}")
+    return result.stdout if result.returncode == 0 else None
+
+
+def find_complete_commit(repo: Path, manifest: list[dict[str, Any]]) -> str | None:
+    """Find a commit whose tree proves every expected publication file hash."""
+    paths = [item["target"] for item in manifest]
+    candidates = (git(repo, "log", "--all", "--format=%H", "--", *paths, check=False) or "").splitlines()
+    expected = {item["target"]: item["expected_hash"] for item in manifest}
+    for candidate in candidates:
+        names = set((git(repo, "show", "--format=", "--name-only", candidate, check=False) or "").splitlines())
+        if not set(expected).issubset(names):
+            continue
+        if all(
+            _sha256_bytes(git_bytes(repo, "show", f"{candidate}:{path}") or b"") == digest
+            for path, digest in expected.items()
+        ):
+            return candidate
+    return None
+
+
 def validate_repository(config: GitConfig) -> None:
     repo = config.repository_path
     if not repo.is_dir() or not (repo / ".git").exists():
@@ -369,8 +394,30 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _detail(publication: dict[str, Any], config: GitConfig, *, commit_sha: str | None, commit_requested: bool, push_requested: bool) -> str:
-    return json.dumps({"repository": str(config.repository_path), "relative_path": publication["relative_path"], "content_hash": hashlib.sha256(publication["markdown"].encode()).hexdigest(), "commit_sha": commit_sha, "commit_requested": commit_requested, "push_requested": push_requested, "branch": config.default_branch, "remote": config.git_remote, "canonical_url": publication.get("canonical_url")}, ensure_ascii=False, sort_keys=True)
+def _sha256_bytes(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
+def publication_manifest(publication: dict[str, Any]) -> list[dict[str, Any]]:
+    """Classify every publication target before any filesystem mutation."""
+    desired: list[tuple[str, bytes, Path | None]] = [
+        (publication["relative_path"], publication["markdown"].encode("utf-8"), publication["path"])
+    ]
+    desired.extend(
+        (item["target"], Path(item["source"]).read_bytes(), item["path"])
+        for item in publication["media"]
+    )
+    manifest: list[dict[str, Any]] = []
+    for relative_path, content, target in desired:
+        existing_hash = _sha256(target) if target is not None and target.is_file() else None
+        expected_hash = _sha256_bytes(content)
+        state = "UNCHANGED" if existing_hash == expected_hash else ("CHANGED" if existing_hash is not None else "MISSING")
+        manifest.append({"target": relative_path, "state": state, "expected_hash": expected_hash, "existing_hash": existing_hash})
+    return manifest
+
+
+def _detail(publication: dict[str, Any], config: GitConfig, *, commit_sha: str | None, commit_requested: bool, push_requested: bool, manifest: list[dict[str, Any]]) -> str:
+    return json.dumps({"repository": str(config.repository_path), "relative_path": publication["relative_path"], "content_hash": hashlib.sha256(publication["markdown"].encode()).hexdigest(), "files": {item["target"]: item["expected_hash"] for item in manifest}, "changed_files": [item["target"] for item in manifest if item["state"] != "UNCHANGED"], "commit_sha": commit_sha, "commit_requested": commit_requested, "push_requested": push_requested, "branch": config.default_branch, "remote": config.git_remote, "canonical_url": publication.get("canonical_url")}, ensure_ascii=False, sort_keys=True)
 
 
 def register_plugin(connection, *, enabled: bool | None = None) -> None:
@@ -407,40 +454,64 @@ def publish_event(database: Path, event_id: int, *, config_path: Path | None = N
         validate_repository(config)
         return "SIMULATED", {"preview": preview, "relative_path": publication["relative_path"]}, {}
     validate_repository(config)
-    expected_paths = [publication["relative_path"], *(item["target"] for item in publication["media"])]
+    manifest = publication_manifest(publication)
+    expected_paths = [item["target"] for item in manifest]
+    changed_paths = [item["target"] for item in manifest if item["state"] != "UNCHANGED"]
+    with connect_database(database) as connection:
+        ledger = begin_submission(connection, event_id=event_id, channel=EVENT_TYPE, payload=payload, target=f"{config.repository_path}:{publication['relative_path']}")
+        if ledger["status"] == "CONFIRMED":
+            evidence = json.loads(ledger["detail"] or "{}") if ledger["detail"] else {}
+            return "COMPLETED", {"idempotent": True, "relative_path": publication["relative_path"], "commit_sha": evidence.get("commit_sha"), "canonical_url": evidence.get("canonical_url")}, {}
+        if ledger["status"] == "NEEDS_OPERATOR":
+            raise MarkdownGitError("publication attempt requires operator reconciliation before retry")
+
+    if not changed_paths:
+        evidence_commit = find_complete_commit(config.repository_path, manifest) if commit_requested else None
+        if commit_requested and evidence_commit is None:
+            detail = _detail(publication, config, commit_sha=None, commit_requested=commit_requested, push_requested=push_requested, manifest=manifest)
+            with connect_database(database) as connection:
+                update_publication(connection, event_id, EVENT_TYPE, "UNKNOWN", detail=detail)
+            return "UNKNOWN", {"relative_path": publication["relative_path"], "reason": "complete publication commit evidence not found"}, {"markdown_git": {"manifest": {item["target"]: item["expected_hash"] for item in manifest}}}
+        detail = _detail(publication, config, commit_sha=evidence_commit, commit_requested=commit_requested, push_requested=push_requested, manifest=manifest)
+        with connect_database(database) as connection:
+            update_publication(connection, event_id, EVENT_TYPE, "CONFIRMED", platform_id=evidence_commit, platform_url=publication.get("canonical_url"), detail=detail)
+        return "COMPLETED", {"idempotent": True, "relative_path": publication["relative_path"], "commit_sha": evidence_commit, "canonical_url": publication.get("canonical_url"), "manifest": {item["target"]: item["expected_hash"] for item in manifest}}, {"markdown_git": {"relative_path": publication["relative_path"], "commit_sha": evidence_commit, "manifest": {item["target"]: item["expected_hash"] for item in manifest}}}
+
     existing_status = git(config.repository_path, "status", "--porcelain", "--", *expected_paths) or ""
     if existing_status.strip():
         raise MarkdownGitError("publication target has unrelated uncommitted changes")
     staged_before = git(config.repository_path, "diff", "--cached", "--name-only") or ""
     if staged_before.strip():
         raise MarkdownGitError("repository has pre-staged changes; publish after resolving them")
-    with connect_database(database) as connection:
-        ledger = begin_submission(connection, event_id=event_id, channel=EVENT_TYPE, payload=payload, target=f"{config.repository_path}:{publication['relative_path']}")
-        if ledger["status"] == "CONFIRMED":
-            evidence = json.loads(ledger["detail"] or "{}") if ledger["detail"] else {}
-            return "COMPLETED", {"idempotent": True, "relative_path": publication["relative_path"], "commit_sha": evidence.get("commit_sha"), "canonical_url": evidence.get("canonical_url")}, {}
     try:
-        was_same = publication["path"].is_file() and publication["path"].read_text(encoding="utf-8") == publication["markdown"]
-        publication["path"].parent.mkdir(parents=True, exist_ok=True)
-        publication["path"].write_text(publication["markdown"], encoding="utf-8")
+        if publication["relative_path"] in changed_paths:
+            publication["path"].parent.mkdir(parents=True, exist_ok=True)
+            publication["path"].write_bytes(publication["markdown"].encode("utf-8"))
         for item in publication["media"]:
-            target: Path = item["path"]
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if item["path"].resolve() != Path(item["source"]).resolve():
-                shutil.copy2(item["source"], target)
+            if item["target"] in changed_paths:
+                target: Path = item["path"]
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if target.resolve() != Path(item["source"]).resolve():
+                    shutil.copy2(item["source"], target)
+        after_manifest = publication_manifest(publication)
+        expected_hashes = {item["target"]: item["expected_hash"] for item in manifest}
+        actual_hashes = {item["target"]: item["expected_hash"] for item in after_manifest}
+        if actual_hashes != expected_hashes or any(item["state"] != "UNCHANGED" for item in after_manifest):
+            raise MarkdownGitError("publication file set does not match its pre-write manifest")
         commit_sha: str | None = None
-        if commit_requested and was_same and not any(item["path"].exists() is False for item in publication["media"]):
-            commit_sha = git(config.repository_path, "log", "-1", "--format=%H", "--", publication["relative_path"], check=False)
-        elif commit_requested:
+        if commit_requested:
             git(config.repository_path, "add", "--", *expected_paths)
             staged = set((git(config.repository_path, "diff", "--cached", "--name-only") or "").splitlines())
-            if staged != set(expected_paths):
+            if staged != set(changed_paths):
                 raise MarkdownGitError("staged file set differs from this publication")
-            git(config.repository_path, "-c", f"user.name={config.author_name}", "-c", f"user.email={config.author_email}", "commit", "-m", f"Publish: {publication['title']}", "--", *expected_paths)
+            git(config.repository_path, "-c", f"user.name={config.author_name}", "-c", f"user.email={config.author_email}", "commit", "-m", f"Publish: {publication['title']}", "--", *changed_paths)
             commit_sha = git(config.repository_path, "rev-parse", "HEAD")
             if not commit_sha:
                 raise MarkdownGitError("Git commit SHA could not be resolved")
-        detail = _detail(publication, config, commit_sha=commit_sha, commit_requested=commit_requested, push_requested=push_requested)
+            remaining = git(config.repository_path, "status", "--porcelain", "--", *expected_paths) or ""
+            if remaining.strip():
+                raise MarkdownGitError("publication paths remain modified after commit")
+        detail = _detail(publication, config, commit_sha=commit_sha, commit_requested=commit_requested, push_requested=push_requested, manifest=manifest)
         if push_requested:
             try:
                 git(config.repository_path, "push", config.git_remote, f"HEAD:{config.default_branch}")
@@ -450,7 +521,7 @@ def publish_event(database: Path, event_id: int, *, config_path: Path | None = N
                 return "UNKNOWN", {"relative_path": publication["relative_path"], "commit_sha": commit_sha, "push": "unknown"}, {"markdown_git": {"relative_path": publication["relative_path"], "commit_sha": commit_sha}}
         with connect_database(database) as connection:
             update_publication(connection, event_id, EVENT_TYPE, "CONFIRMED", platform_id=commit_sha, platform_url=publication.get("canonical_url"), detail=detail)
-        return "COMPLETED", {"relative_path": publication["relative_path"], "commit_sha": commit_sha, "canonical_url": publication.get("canonical_url"), "media": [item["target"] for item in publication["media"]]}, {"markdown_git": {"relative_path": publication["relative_path"], "commit_sha": commit_sha, "canonical_url": publication.get("canonical_url")}}
+        return "COMPLETED", {"relative_path": publication["relative_path"], "commit_sha": commit_sha, "canonical_url": publication.get("canonical_url"), "media": [item["target"] for item in publication["media"]], "manifest": {item["target"]: item["expected_hash"] for item in manifest}}, {"markdown_git": {"relative_path": publication["relative_path"], "commit_sha": commit_sha, "canonical_url": publication.get("canonical_url"), "manifest": {item["target"]: item["expected_hash"] for item in manifest}}}
     except Exception as exc:
         with connect_database(database) as connection:
             update_publication(connection, event_id, EVENT_TYPE, "UNKNOWN", detail=str(exc)[:8000])
@@ -464,19 +535,25 @@ def reconcile_markdown_attempt(attempt: dict[str, Any]) -> tuple[str, dict[str, 
         repository = Path(detail["repository"]).resolve()
         target = under(repository, str(detail["relative_path"]), label="ledger target")
         expected_hash = str(detail["content_hash"])
-        if not target.is_file():
-            if detail.get("commit_sha"):
-                return "NEEDS_OPERATOR", {"detail": "expected commit exists in ledger but target file is absent"}
-            return "FAILED", {"detail": "target file is absent and no commit evidence exists"}
-        if _sha256(target) != expected_hash:
-            return "NEEDS_OPERATOR", {"detail": "target content hash differs from the ledger"}
+        files = detail.get("files")
+        if not isinstance(files, dict):
+            files = {str(detail["relative_path"]): expected_hash}
+        for relative_path, digest in files.items():
+            path = under(repository, str(relative_path), label="ledger target")
+            if not path.is_file():
+                if detail.get("commit_sha"):
+                    return "NEEDS_OPERATOR", {"detail": f"expected publication file is absent: {relative_path}"}
+                return "FAILED", {"detail": f"publication file is absent: {relative_path}"}
+            if _sha256(path) != str(digest):
+                return "NEEDS_OPERATOR", {"detail": f"publication file hash differs from ledger: {relative_path}"}
         if detail.get("commit_sha"):
             commit = git(repository, "cat-file", "-e", f"{detail['commit_sha']}^{{commit}}", check=False)
             if commit is None:
                 return "NEEDS_OPERATOR", {"detail": "recorded commit cannot be found locally"}
             committed = git(repository, "show", "--format=", "--name-only", str(detail["commit_sha"])) or ""
-            if str(detail["relative_path"]) not in committed.splitlines():
-                return "NEEDS_OPERATOR", {"detail": "recorded commit does not contain the expected file"}
+            changed_files = set(detail.get("changed_files", files.keys()))
+            if not changed_files.issubset(set(committed.splitlines())):
+                return "NEEDS_OPERATOR", {"detail": "recorded commit does not contain all changed publication files"}
         if detail.get("push_requested"):
             return "NEEDS_OPERATOR", {"detail": "local publication is proven; remote push outcome requires operator verification"}
         return "CONFIRMED", {"detail": "target file and local commit evidence verified"}
