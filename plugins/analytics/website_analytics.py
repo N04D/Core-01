@@ -60,6 +60,41 @@ class AnalyticsInvalidResponse(AnalyticsError):
     pass
 
 
+def normalize_provider_window(provider_name: str, requested_window: str) -> str:
+    """Return the metric window supported by a provider.
+
+    LinkedIn post cards expose cumulative counters, so cadence requests such
+    as 24h/7d/30d are stored and aggregated as lifetime observations.
+    """
+    if provider_name == "linkedin":
+        return "lifetime"
+    if requested_window not in WINDOWS:
+        raise AnalyticsError(f"unsupported analytics window: {requested_window}")
+    return requested_window
+
+
+def resolve_provider(connection: Any, payload: dict[str, Any], attempt_id: int | None) -> str:
+    """Resolve an analytics provider from explicit or deterministic evidence."""
+    explicit = str(payload.get("provider", "")).strip().lower()
+    if explicit:
+        if explicit not in {"plausible", "linkedin"}:
+            raise AnalyticsInvalidResponse(f"unknown analytics provider: {explicit}")
+        return explicit
+    channel = None
+    if attempt_id is not None:
+        row = connection.execute("SELECT channel FROM publication_attempts WHERE id=?", (attempt_id,)).fetchone()
+        channel = str(row["channel"]).upper() if row and row["channel"] else None
+    if channel in LINKEDIN_CHANNELS:
+        return "linkedin"
+    # Historical/fixture records can carry the provider when the publication
+    # channel itself is not analytics-specific.  Only known providers count.
+    if attempt_id is not None:
+        row = connection.execute("SELECT provider FROM analytics_snapshots WHERE publication_attempt_id=? ORDER BY collected_at DESC,id DESC LIMIT 1", (attempt_id,)).fetchone()
+        if row and str(row["provider"]).lower() in {"plausible", "linkedin"}:
+            return str(row["provider"]).lower()
+    return "plausible"
+
+
 class PlausibleProvider:
     name = "plausible"
 
@@ -158,14 +193,11 @@ def collect_event(database: Path, event_id: int, payload: dict[str, Any]) -> tup
     window = str(payload.get("window", "lifetime"))
     if window not in WINDOWS:
         raise AnalyticsError(f"unsupported analytics window: {window}")
-    provider_name = str(payload.get("provider", "")).strip().lower()
     simulated = bool(payload.get("mode", "").upper() == "SIMULATED" or payload.get("dry_run") or payload.get("simulated"))
     run_id: int | None = None
     with connect_database(database) as connection:
         attempt_id, url, external_id, channel = _publication_target(connection, payload)
-        if not provider_name and channel and str(channel).upper() in LINKEDIN_CHANNELS:
-            provider_name = "linkedin"
-        provider_name = provider_name or "plausible"
+        provider_name = resolve_provider(connection, payload, attempt_id)
         provider_plugins = {"plausible": PLAUSIBLE_PLUGIN_NAME, "linkedin": LINKEDIN_PLUGIN_NAME}
         if provider_name not in provider_plugins:
             raise AnalyticsInvalidResponse(f"unknown analytics provider: {provider_name}")
@@ -186,7 +218,7 @@ def collect_event(database: Path, event_id: int, payload: dict[str, Any]) -> tup
         try:
             metadata = {"auth_path": os.getenv("LINKEDIN_AUTH_PATH", str(SESSIONS_DIR / "linkedin_auth.json")), "headless": True}
             result = provider.collect(CollectionTarget(url, external_id, window, attempt_id, metadata))
-            stored_window = "lifetime" if provider_name == "linkedin" else window
+            stored_window = normalize_provider_window(provider_name, window)
             snapshot_id = record_snapshot(connection, AnalyticsSnapshot(provider=provider.name, channel=channel, publication_attempt_id=attempt_id, event_id=event_id, external_id=external_id, canonical_url=url, metrics=result["metrics"], raw_payload=result.get("raw", result), window=stored_window, mode="SIMULATED" if simulated else "REAL"))
             status = "SIMULATED" if simulated else "COMPLETED"
             connection.execute("UPDATE analytics_collection_runs SET status=?,completed_at=CURRENT_TIMESTAMP WHERE id=?", (status, run_id))
@@ -221,7 +253,10 @@ def aggregate_event(database: Path, payload: dict[str, Any]) -> tuple[str, dict[
         raise AnalyticsError("publication_attempt_id is required for aggregation")
     with connect_database(database) as connection:
         mode = str(payload.get("mode", "REAL")).upper()
-        performance = aggregate_publication(connection, int(attempt_id), str(payload.get("window", "lifetime")), mode=mode, emit_feedback=True)
+        provider_name = resolve_provider(connection, payload, int(attempt_id))
+        requested_window = str(payload.get("window", "lifetime"))
+        effective_window = normalize_provider_window(provider_name, requested_window)
+        performance = aggregate_publication(connection, int(attempt_id), effective_window, mode=mode, emit_feedback=True)
         if performance is None:
             raise AnalyticsError("no analytics snapshot exists for publication")
         if mode == "REAL":
@@ -229,7 +264,13 @@ def aggregate_event(database: Path, payload: dict[str, Any]) -> tuple[str, dict[
             performance["evergreen"] = {"processed": evergreen_processed, "flagged": evergreen_flagged}
         else:
             performance["evergreen"] = {"processed": 0, "flagged": 0}
-    return "SIMULATED" if mode == "SIMULATED" else "COMPLETED", {"performance": performance, "feedback_event_id": performance.get("feedback_event_id")}, {}
+    return "SIMULATED" if mode == "SIMULATED" else "COMPLETED", {
+        "performance": performance,
+        "feedback_event_id": performance.get("feedback_event_id"),
+        "provider": provider_name,
+        "requested_window": requested_window,
+        "effective_window": effective_window,
+    }, {}
 
 
 def main() -> int:

@@ -14,7 +14,7 @@ from plugins.analytics.linkedin_analytics import (
     parse_metric,
     validate_linkedin_url,
 )
-from plugins.analytics.website_analytics import collect_event, register_plugin
+from plugins.analytics.website_analytics import aggregate_event, collect_event, register_plugin
 
 
 def _attempt(db: Path, channel: str = "PUBLISH_LINKEDIN_PRO", url: str | None = None) -> int:
@@ -172,3 +172,47 @@ def test_manual_api_preserves_and_validates_provider(tmp_path: Path):
         payload = json.loads(conn.execute("SELECT payload FROM events_queue WHERE id=?", (event_id,)).fetchone()[0])
         assert payload["provider"] == "linkedin"
     assert client.post("/api/analytics/collect", json={"provider": "evil-provider"}).status_code == 400
+
+
+@pytest.mark.parametrize("requested_window", ["24h", "7d", "30d", "lifetime"])
+def test_linkedin_collection_and_aggregation_share_lifetime_window(tmp_path: Path, requested_window: str):
+    db = tmp_path / "events.db"
+    initialize_database(db)
+    attempt = _attempt(db, channel="LINKEDIN", url="https://www.linkedin.com/posts/example-123")
+    with connect_database(db) as conn:
+        register_plugin(conn)
+    collect_event(db, None, {"provider": "linkedin", "mode": "SIMULATED", "window": requested_window, "publication_attempt_id": attempt, "fixture": {"metrics": {"views": 100, "reactions": 10}}})
+    outcome, result, _ = aggregate_event(db, {"provider": "linkedin", "mode": "SIMULATED", "window": requested_window, "publication_attempt_id": attempt})
+    assert outcome == "SIMULATED"
+    assert result["requested_window"] == requested_window
+    assert result["effective_window"] == "lifetime"
+    assert result["performance"]["window"] == "lifetime"
+    with connect_database(db, read_only=True) as conn:
+        assert conn.execute("SELECT window FROM content_performance").fetchone()[0] == "lifetime"
+        assert conn.execute("SELECT performance_window FROM content_feedback").fetchone()[0] == "lifetime"
+
+
+def test_linkedin_aggregation_infers_provider_from_channel(tmp_path: Path):
+    db = tmp_path / "events.db"
+    initialize_database(db)
+    attempt = _attempt(db, channel="PUBLISH_LINKEDIN_PRO", url="https://www.linkedin.com/posts/example-123")
+    with connect_database(db) as conn:
+        register_plugin(conn)
+    collect_event(db, None, {"provider": "linkedin", "mode": "SIMULATED", "window": "24h", "publication_attempt_id": attempt, "fixture": {"metrics": {"views": 1}}})
+    outcome, result, _ = aggregate_event(db, {"mode": "SIMULATED", "window": "24h", "publication_attempt_id": attempt})
+    assert outcome == "SIMULATED"
+    assert result["provider"] == "linkedin"
+    assert result["effective_window"] == "lifetime"
+
+
+def test_plausible_window_semantics_remain_unchanged(tmp_path: Path):
+    db = tmp_path / "events.db"
+    initialize_database(db)
+    attempt = _attempt(db, channel="PUBLISH_MARKDOWN_GIT", url="https://example.test/article")
+    with connect_database(db) as conn:
+        register_plugin(conn)
+    collect_event(db, None, {"provider": "plausible", "mode": "SIMULATED", "window": "24h", "publication_attempt_id": attempt, "fixture": {"metrics": {"views": 1}}})
+    outcome, result, _ = aggregate_event(db, {"provider": "plausible", "mode": "SIMULATED", "window": "24h", "publication_attempt_id": attempt})
+    assert outcome == "SIMULATED"
+    assert result["effective_window"] == "24h"
+    assert result["performance"]["window"] == "24h"
