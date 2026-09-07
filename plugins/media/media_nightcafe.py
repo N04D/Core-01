@@ -20,10 +20,11 @@ if __package__ in {None, ""}:
 
 from plugins.media.base import MediaAsset, MediaProvider
 from core.database import connect_database
+from core.paths import DATABASE_PATH
 
 
 PROJECT_ROOT: Final = Path(__file__).resolve().parents[2]
-DEFAULT_DATABASE: Final = PROJECT_ROOT / "db" / "events.db"
+DEFAULT_DATABASE: Final = DATABASE_PATH
 PLUGIN_NAME: Final = "NightCafe Local Media"
 SOURCE_KEY: Final = "nightcafe-local"
 EXTENSIONS: Final = {

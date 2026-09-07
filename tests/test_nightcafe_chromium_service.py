@@ -15,9 +15,9 @@ class NightCafeChromiumServiceTests(unittest.TestCase):
     def test_unit_has_local_cdp_profile_and_health_gate(self) -> None:
         unit = (ROOT / "deploy/nightcafe-chromium.service").read_text(encoding="utf-8")
         self.assertIn('"--remote-debugging-port=${CDP_PORT}"', (ROOT / "scripts/start_nightcafe_chromium.sh").read_text())
-        self.assertIn("/home/infra/dev/vault/chrome_profile", unit)
+        self.assertIn("@CORE_HOME@/vault/chrome_profile", unit)
         self.assertIn("NIGHTCAFE_START_URL=https://creator.nightcafe.studio/", unit)
-        self.assertIn("ExecStartPost=/home/infra/dev/scripts/check_nightcafe_chromium.sh", unit)
+        self.assertIn("ExecStartPost=@CORE_HOME@/scripts/check_nightcafe_chromium.sh", unit)
         self.assertIn("KillMode=control-group", unit)
         launcher = (ROOT / "scripts/start_nightcafe_chromium.sh").read_text(encoding="utf-8")
         self.assertIn("--enable-gpu", launcher)

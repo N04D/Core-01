@@ -6,13 +6,13 @@ Requires=social-worker.service
 
 [Service]
 Type=simple
-User=infra
-Group=infra
-WorkingDirectory=/home/infra/dev
+User=@CORE_USER@
+Group=@CORE_GROUP@
+WorkingDirectory=@CORE_HOME@
 Environment=PYTHONUNBUFFERED=1
-Environment=PATH=/home/infra/dev/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-EnvironmentFile=-/home/infra/dev/.env
-ExecStart=/home/infra/dev/venv/bin/python3 /home/infra/dev/daemon/scheduler.py --db /home/infra/dev/db/events.db --interval 15
+Environment=PATH=@CORE_HOME@/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-@CORE_HOME@/.env
+ExecStart=@CORE_HOME@/venv/bin/python3 @CORE_HOME@/daemon/scheduler.py --db @CORE_DATA@/db/events.db --interval 15
 Restart=always
 RestartSec=5
 TimeoutStopSec=30

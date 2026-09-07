@@ -16,13 +16,14 @@ from typing import Any, Final
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from core.event_protocol import emit_result
 from core.database import connect_database
+from core.paths import DATABASE_PATH
 
 
 PLUGIN_NAME: Final = "Mock Publisher (Test Zandbak)"
 PLUGIN_TYPE: Final = "channel"
 PLUGIN_ICON: Final = "🧪"
 PROJECT_ROOT: Final = Path(__file__).resolve().parents[2]
-DEFAULT_DATABASE: Final = PROJECT_ROOT / "db" / "events.db"
+DEFAULT_DATABASE: Final = DATABASE_PATH
 DEFAULT_LOG_FILE: Final = PROJECT_ROOT / "vault" / "logs" / "mock_publish_log.md"
 LOGGER: Final = logging.getLogger("pub_mock")
 

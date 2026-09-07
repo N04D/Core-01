@@ -108,6 +108,39 @@ De session-health daemon controleert actieve LinkedIn-, Substack- en Medium-publ
 - Screenshots bij browserautomatiseringsfouten.
 - Read-only databaseverbinding voor het statusdashboard.
 
+## Broncode versus runtime-data
+
+De repository bevat uitsluitend broncode, prompts, skills, templates en fixtures.
+Mutable data wordt centraal opgelost door `core/paths.py`:
+
+```text
+CORE_ROOT  = checkout/source repository
+CORE_DATA  = runtime root (default: <checkout>/runtime)
+```
+
+Daaronder staan `db/`, `media/`, `analytics/`, `research/`, `concepts/`,
+`published/`, `logs/`, `sessions/` en `tmp/`. Auth storage-state is altijd
+0600 en staat onder `sessions/`. `scripts/migrate_runtime_data.py` kopieert de
+oude `vault/`- en `db/`-inhoud zonder bestaande bestemmingen of bronbestanden te
+overschrijven. Runtimepaden zijn door `.gitignore` uitgesloten.
+
+## NightCafe als normaal event
+
+De FastAPI- en Flask-adapters voor NightCafe schrijven uitsluitend een
+`NIGHTCAFE_GENERATE`-event met een JSON-payload naar `events_queue`. Ze houden
+geen in-memory jobregister of uitvoerende achtergrondthread bij. De worker claimt
+het event, start `plugins/media/nightcafe_automation.py` en schrijft status/resultaat
+duurzaam terug; een API-restart verliest dus geen jobstatus.
+
+## Publication reconciler
+
+`core/reconciler.py` selecteert `SUBMITTED`/`UNKNOWN` ledgerrecords. Zonder
+channel-specifiek sterk bewijs wordt nooit opnieuw gepubliceerd: de poging gaat
+naar `NEEDS_OPERATOR`. Een channel adapter mag alleen `CONFIRMED` of `FAILED`
+teruggeven met bewijs (platform-ID/URL of een betrouwbare contentmatch). Het
+dashboard exposeert unresolved attempts en biedt een expliciete operator-resolve
+actie.
+
 ## Sessies en dashboard-authenticatie
 
 `dashboard/authenticate.py` kan via Chrome DevTools Protocol (standaard

@@ -12,7 +12,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Final
 from uuid import uuid4
-import threading
 
 from flask import Flask, abort, jsonify, render_template, request, send_file
 from werkzeug.utils import secure_filename
@@ -20,11 +19,12 @@ from werkzeug.utils import secure_filename
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.database import connect_database
 from core.keyring_store import set_secret
+from core.paths import CORE_ROOT, DATABASE_PATH, SESSIONS_DIR
 
 
-PROJECT_ROOT: Final = Path(__file__).resolve().parent.parent
-DEFAULT_DATABASE: Final = PROJECT_ROOT / "db" / "events.db"
-VAULT_ROOT: Final = PROJECT_ROOT / "vault"
+PROJECT_ROOT: Final = CORE_ROOT
+DEFAULT_DATABASE: Final = DATABASE_PATH
+VAULT_ROOT: Final = CORE_ROOT / "vault"  # source templates remain in the repository
 EDITABLE_AREAS: Final = {"concepten", "uitgaand"}
 MEDIA_EXTENSIONS: Final = {
     ".jpg": "image",
@@ -53,26 +53,25 @@ PLUGIN_ANALYTICS: Final = {
 AUTH_PROFILES: Final = {
     "LinkedIn Publisher (Productie)": {
         "platform": "linkedin",
-        "auth_file": PROJECT_ROOT / "config" / "linkedin_auth.json",
+        "auth_file": SESSIONS_DIR / "linkedin_auth.json",
     },
     "LinkedIn Pro Publisher & Analytics": {
         "platform": "linkedin",
-        "auth_file": PROJECT_ROOT / "config" / "linkedin_auth.json",
+        "auth_file": SESSIONS_DIR / "linkedin_auth.json",
     },
     "Substack Publisher": {
         "platform": "substack",
-        "auth_file": PROJECT_ROOT / "config" / "substack_auth.json",
+        "auth_file": SESSIONS_DIR / "substack_auth.json",
     },
     "Substack Pro Publisher & Analytics": {
         "platform": "substack",
-        "auth_file": PROJECT_ROOT / "config" / "substack_auth.json",
+        "auth_file": SESSIONS_DIR / "substack_auth.json",
     },
     "Medium Publisher": {
         "platform": "medium",
-        "auth_file": PROJECT_ROOT / "config" / "medium_auth.json",
+        "auth_file": SESSIONS_DIR / "medium_auth.json",
     },
 }
-NIGHTCAFE_JOBS: dict[str, dict[str, Any]] = {}
 AUTH_PROCESSES: dict[str, subprocess.Popen[Any]] = {}
 
 
@@ -456,6 +455,28 @@ def create_app(database_path: Path | None = None) -> Flask:
             ).fetchall()
         return jsonify([dict(row) for row in rows])
 
+    @app.get("/api/publication-attempts/unresolved")
+    def unresolved_publications() -> Any:
+        with connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM publication_attempts WHERE status IN ('SUBMITTED','UNKNOWN','NEEDS_OPERATOR') ORDER BY updated_at,id"
+            ).fetchall()
+        return jsonify([dict(row) for row in rows])
+
+    @app.post("/api/publication-attempts/<int:attempt_id>/operator-resolve")
+    def operator_resolve_publication(attempt_id: int) -> Any:
+        body = request.get_json(silent=True) or {}
+        status = str(body.get("status", "NEEDS_OPERATOR")).upper()
+        if status not in {"CONFIRMED", "FAILED", "NEEDS_OPERATOR"}:
+            abort(400, description="status must be CONFIRMED, FAILED or NEEDS_OPERATOR")
+        detail = str(body.get("detail", "Operator resolution"))[:8000]
+        with connect() as connection:
+            row = connection.execute("SELECT event_id,channel FROM publication_attempts WHERE id=?", (attempt_id,)).fetchone()
+            if row is None: abort(404, description="publication attempt not found")
+            connection.execute("UPDATE publication_attempts SET status=?,detail=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (status, detail, attempt_id))
+            connection.commit()
+        return jsonify({"id": attempt_id, "status": status, "detail": detail})
+
     @app.patch("/api/notifications/<int:notification_id>")
     def read_notification(notification_id: int) -> Any:
         with connect() as connection:
@@ -684,37 +705,25 @@ def create_app(database_path: Path | None = None) -> Flask:
         body = request.get_json(silent=True) or {}
         prompt = str(body.get("prompt", "")).strip()
         if not prompt: abort(400, description="prompt is verplicht")
-        job_id = uuid4().hex
-        NIGHTCAFE_JOBS[job_id] = {"id": job_id, "status": "RUNNING", "prompt": prompt}
-        def run() -> None:
-            output_dir = VAULT_ROOT / "media" / "nightcafe"
-            output_dir.mkdir(parents=True, exist_ok=True)
-            output = output_dir / f"ui_{job_id}.png"
-            command = [sys.executable, str(PROJECT_ROOT / "plugins/media/nightcafe_automation.py"), "--db", app.config["DATABASE"], "--prompt", prompt, "--name", "UI Generation", "--sequence", "1", "--run-date", datetime.now(timezone.utc).date().isoformat(), "--output-dir", str(output_dir)]
-            command.append("--simulate" if body.get("simulate", False) else "--live")
-            if not body.get("simulate", False):
-                # The dashboard must reuse the human-authenticated browser tab;
-                # otherwise the plugin starts a fresh context and Cloudflare blocks it.
-                command += ["--cdp-url", os.getenv("NIGHTCAFE_CDP_URL", "http://127.0.0.1:9222")]
-            if body.get("model"): command += ["--model", str(body["model"])]
-            if body.get("format"): command += ["--format", str(body["format"])]
-            if body.get("negative_prompt"): command += ["--negative-prompt", str(body["negative_prompt"])]
-            if body.get("steps"): command += ["--steps", str(int(body["steps"]))]
-            try:
-                result = subprocess.run(command, cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=660)
-                if result.returncode: raise RuntimeError(result.stdout[-500:] or result.stderr[-500:])
-                lines = [line for line in result.stdout.splitlines() if line.strip()]
-                NIGHTCAFE_JOBS[job_id].update(status="COMPLETED", result=json.loads(lines[-1]) if lines else {})
-            except Exception as exc:
-                NIGHTCAFE_JOBS[job_id].update(status="FAILED", error=str(exc))
-        threading.Thread(target=run, name=f"nightcafe-{job_id[:8]}", daemon=True).start()
-        return jsonify(NIGHTCAFE_JOBS[job_id]), 202
+        payload = {key: body[key] for key in ("prompt", "model", "format", "negative_prompt", "steps", "live", "simulate") if key in body}
+        payload["mode"] = "SIMULATED" if body.get("simulate", False) else "LIVE"
+        with connect() as connection:
+            route = connection.execute("SELECT target_plugin_name FROM event_routes WHERE event_type='NIGHTCAFE_GENERATE'").fetchone()
+            if route is None: abort(503, description="NIGHTCAFE_GENERATE route is not registered")
+            cursor = connection.execute("INSERT INTO events_queue(event_type,payload,status,next_attempt_at) VALUES (?,?, 'PENDING', CURRENT_TIMESTAMP)", ("NIGHTCAFE_GENERATE", json.dumps(payload, ensure_ascii=False)))
+            connection.commit()
+            event_id = int(cursor.lastrowid)
+        return jsonify({"id": str(event_id), "job_id": str(event_id), "event_id": event_id, "status": "PENDING"}), 202
 
     @app.get("/api/nightcafe/generations/<job_id>")
     def nightcafe_generation_status(job_id: str) -> Any:
-        job = NIGHTCAFE_JOBS.get(job_id)
-        if job is None: abort(404, description="generatie niet gevonden")
-        return jsonify(job)
+        try: event_id = int(job_id)
+        except ValueError: abort(400, description="ongeldig generatie-id")
+        with connect() as connection:
+            row = connection.execute("SELECT id,status,payload,error_log,created_at,updated_at FROM events_queue WHERE id=? AND event_type='NIGHTCAFE_GENERATE'", (event_id,)).fetchone()
+        if row is None: abort(404, description="generatie niet gevonden")
+        payload = json.loads(row["payload"] or "{}")
+        return jsonify({"id": str(row["id"]), "job_id": str(row["id"]), "event_id": row["id"], "status": row["status"], "result": payload.get("result") or payload.get("nightcafe"), "error": row["error_log"], "created_at": row["created_at"], "updated_at": row["updated_at"]})
 
     @app.get("/api/media-store/assets/<int:asset_id>/content")
     def media_store_content(asset_id: int) -> Any:

@@ -5,11 +5,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=infra
-Group=infra
-WorkingDirectory=/home/infra/dev
-EnvironmentFile=-/home/infra/dev/.env
-ExecStart=/home/infra/dev/venv/bin/python3 /home/infra/dev/plugins/inputs/telegram_in.py --db /home/infra/dev/db/events.db --auto-dispatch
+User=@CORE_USER@
+Group=@CORE_GROUP@
+WorkingDirectory=@CORE_HOME@
+EnvironmentFile=-@CORE_HOME@/.env
+ExecStart=@CORE_HOME@/venv/bin/python3 @CORE_HOME@/plugins/inputs/telegram_in.py --db @CORE_DATA@/db/events.db --auto-dispatch
 Restart=always
 RestartSec=5
 NoNewPrivileges=true

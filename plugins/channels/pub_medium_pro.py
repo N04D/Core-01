@@ -19,6 +19,7 @@ from uuid import uuid4
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from core.event_protocol import begin_submission, emit_result, update_publication
 from core.database import connect_database
+from core.paths import SESSIONS_DIR
 from core.browser_robustness import (
     capture_sanitized_diagnostic, find_with_accessible_fallbacks,
     verify_submission,
@@ -31,7 +32,7 @@ PLUGIN_ICON: Final = "✍️"
 EVENT_TYPE: Final = "PUBLISH_MEDIUM"
 PROJECT_ROOT: Final = Path(__file__).resolve().parents[2]
 DEFAULT_DATABASE: Final = Path("../db/events.db")
-DEFAULT_AUTH: Final = PROJECT_ROOT / "config" / "medium_auth.json"
+DEFAULT_AUTH: Final = SESSIONS_DIR / "medium_auth.json"
 SCREENSHOT_DIR: Final = PROJECT_ROOT / "vault" / "logs" / "screenshots"
 LOGGER: Final = logging.getLogger("pub_medium_pro")
 

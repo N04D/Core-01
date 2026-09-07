@@ -20,6 +20,7 @@ from uuid import uuid4
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from core.event_protocol import emit_result
 from core.database import connect_database
+from core.paths import DATABASE_PATH
 
 import requests
 from dotenv import load_dotenv
@@ -29,7 +30,7 @@ PLUGIN_NAME: Final = "Firecrawl Web Scraper"
 PLUGIN_TYPE: Final = "io"
 PLUGIN_ICON: Final = "🕷️"
 PROJECT_ROOT: Final = Path(__file__).resolve().parents[2]
-DEFAULT_DATABASE: Final = PROJECT_ROOT / "db" / "events.db"
+DEFAULT_DATABASE: Final = DATABASE_PATH
 RESEARCH_DIRECTORY: Final = PROJECT_ROOT / "vault" / "research"
 LOGGER: Final = logging.getLogger("crawl_firecrawl")
 

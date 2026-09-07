@@ -1,9 +1,0 @@
-{
-  "mode": "fetch_profile",
-  "mock": true,
-  "status": "AUTH_REQUIRED",
-  "substack_contacted": false,
-  "name": "Mock Substack profile",
-  "description": "Auth required",
-  "subscriber_text": "0"
-}

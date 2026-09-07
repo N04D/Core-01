@@ -10,6 +10,23 @@ Doelplatform: Debian/Ubuntu Linux op ARM64 (Raspberry Pi 5). De units in deze ch
 
 Pas deze waarden aan wanneer de checkout op een ander absoluut pad of onder een andere gebruiker draait.
 
+## Platform-neutrale runtime
+
+De bootstrap ondersteunt ARM64/Raspberry Pi, x86_64, CPU-only en NVIDIA-hosts.
+NVIDIA/CUDA, Ollama en Chromium zijn optionele capabilities; ontbrekende opties
+worden als diagnostics gemeld. Voor deployment configureer je:
+
+```bash
+CORE_HOME=/opt/core-01
+CORE_DATA=/var/lib/core-01
+CORE_USER=core01
+CORE_GROUP=core01
+CORE_PYTHON=/opt/core-01/venv/bin/python3
+```
+
+`deploy/install_services.sh` rendert de systemd-templates met deze waarden en
+gebruikt geen ontwikkelaarspad of vaste gebruiker.
+
 ## Bootstrap
 
 ```bash
@@ -106,3 +123,9 @@ De web-UI bindt standaard uitsluitend aan `127.0.0.1`:
 
 Open daarna `http://127.0.0.1:8080`. Gebruik `--host 0.0.0.0` alleen achter
 een vertrouwde firewall of reverse proxy met authenticatie.
+
+Controleer de installatie met:
+
+```bash
+./venv/bin/python3 scripts/deployment_doctor.py --db "$CORE_DATA/db/events.db"
+```

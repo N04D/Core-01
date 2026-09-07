@@ -5,18 +5,18 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/infra/dev
+WorkingDirectory=@CORE_HOME@
 Environment=HOME=/home/infra
 Environment=DISPLAY=:0
 Environment=XDG_RUNTIME_DIR=/run/user/%U
 Environment=NIGHTCAFE_CDP_PORT=9222
-Environment=NIGHTCAFE_CHROME_PROFILE=/home/infra/dev/vault/chrome_profile
+Environment=NIGHTCAFE_CHROME_PROFILE=@CORE_HOME@/vault/chrome_profile
 Environment=NIGHTCAFE_START_URL=https://creator.nightcafe.studio/
 Environment=NIGHTCAFE_HEADLESS=false
 # Set to 1 only on kernels/containers that reject Chromium's sandbox namespaces.
 Environment=NIGHTCAFE_NO_SANDBOX=1
-ExecStart=/home/infra/dev/scripts/start_nightcafe_chromium.sh
-ExecStartPost=/home/infra/dev/scripts/check_nightcafe_chromium.sh
+ExecStart=@CORE_HOME@/scripts/start_nightcafe_chromium.sh
+ExecStartPost=@CORE_HOME@/scripts/check_nightcafe_chromium.sh
 Restart=always
 RestartSec=5
 TimeoutStartSec=120

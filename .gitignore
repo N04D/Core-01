@@ -9,6 +9,7 @@ config/linkedin_auth.json
 config/gdrive_auth.json
 config/nightcafe_auth.json
 config/*_auth.json
+runtime/
 config/.nightcafe_auth.json.swp
 linkedin_auth.json
 auth.json
@@ -19,5 +20,11 @@ key.txt.pub
 db/*.db
 db/*.db-shm
 db/*.db-wal
+vault/media/
+vault/analytics/
+vault/research/
+vault/logs/
+vault/concepten/
+vault/gepubliceerd/
 vault/logs/screenshots/
 vault/chrome_profile/

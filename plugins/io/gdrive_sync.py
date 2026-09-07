@@ -26,10 +26,11 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from core.database import connect_database
+from core.paths import DATABASE_PATH
 from core.event_protocol import emit_result
 
 PROJECT_ROOT: Final = Path(__file__).resolve().parents[2]
-DEFAULT_DB: Final = PROJECT_ROOT / "db" / "events.db"
+DEFAULT_DB: Final = DATABASE_PATH
 DEFAULT_AUTH: Final = PROJECT_ROOT / "config" / "gdrive_auth.json"
 DEFAULT_STAGING: Final = PROJECT_ROOT / "vault" / "media" / "gdrive"
 MAX_DOWNLOAD_BYTES: Final = 500 * 1024 * 1024

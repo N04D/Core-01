@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Final
 
@@ -13,6 +14,7 @@ from typing import Any, Final
 PROJECT_ROOT: Final = Path(__file__).resolve().parent.parent
 DATABASE: Final = PROJECT_ROOT / "db" / "events.db"
 PLUGIN: Final = PROJECT_ROOT / "plugins" / "channels" / "pub_linkedin_pro.py"
+MOCK_AUTH: Final = Path(tempfile.gettempdir()) / "core01-linkedin-no-auth.json"
 AUTH_FILE: Final = PROJECT_ROOT / "config" / "linkedin_auth.json"
 RESEARCH_DIR: Final = PROJECT_ROOT / "vault" / "research"
 ANALYTICS_DIR: Final = PROJECT_ROOT / "vault" / "analytics"
@@ -80,6 +82,8 @@ def test_bio() -> tuple[Path, Path]:
             "--fetch-bio",
             "--db",
             str(DATABASE),
+            "--auth",
+            str(MOCK_AUTH),
         ]
     )
     json_path = exactly_one_new(
@@ -110,6 +114,8 @@ def test_analytics() -> tuple[Path, Path]:
             "5",
             "--db",
             str(DATABASE),
+            "--auth",
+            str(MOCK_AUTH),
         ]
     )
     json_path = exactly_one_new(

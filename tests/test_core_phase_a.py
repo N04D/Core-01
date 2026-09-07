@@ -146,7 +146,10 @@ class LeaseTests(DatabaseCase):
                 "INSERT INTO event_routes(event_type,target_plugin_name) VALUES ('TEST','Medium test')"
             )
             connection.commit()
-            self.assertTrue(process_one(connection, self.database, "auth-worker", 30, 1))
+            # Force an isolated runtime root so host credentials never affect
+            # the deterministic missing-auth assertion.
+            with patch.dict(os.environ, {"CORE_DATA": str(self.database.parent / "runtime")}):
+                self.assertTrue(process_one(connection, self.database, "auth-worker", 30, 1))
             row = connection.execute(
                 "SELECT status,retry_count,payload FROM events_queue WHERE id=?", (event_id,)
             ).fetchone()

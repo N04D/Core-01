@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "core-01"
+version = "0.1.0"
+description = "Local-first event-driven AI OS"
+requires-python = ">=3.10"
+dependencies = [
+  "Flask>=2.3",
+  "fastapi>=0.100",
+  "pydantic>=2",
+  "python-dotenv>=1",
+  "PyYAML>=6",
+  "requests>=2.31",
+]
+
+[project.optional-dependencies]
+browser = ["playwright>=1.40"]
+media = ["Pillow>=10"]
+telegram = ["python-telegram-bot>=20"]
+dev = ["pytest>=7", "ruff>=0.6"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "scripts"]
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+exclude = ["vault", "runtime", "venv"]
+
+[tool.ruff.lint]
+# Syntax/runtime lint is enforced repository-wide; legacy modules retain their
+# historical compact style and are migrated incrementally in later work.
+select = ["E9"]

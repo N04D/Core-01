@@ -21,6 +21,7 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from core.database import connect_database
+from core.paths import DATABASE_PATH
 
 try:
     from dotenv import load_dotenv
@@ -30,7 +31,7 @@ except ImportError:  # pragma: no cover
 
 
 PROJECT_ROOT: Final = Path(__file__).resolve().parents[2]
-DEFAULT_DATABASE: Final = PROJECT_ROOT / "db" / "events.db"
+DEFAULT_DATABASE: Final = DATABASE_PATH
 PLUGIN_NAME: Final = "Telegram Inbound Hub"
 PLUGIN_TYPE: Final = "input"
 PLUGIN_ICON: Final = "✈️"

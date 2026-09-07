@@ -12,6 +12,7 @@ from typing import Final
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.database import connect_database
+from core.paths import DATABASE_PATH
 
 
 LOGGER: Final = logging.getLogger("setup_database")
@@ -233,7 +234,7 @@ SCHEMA: Final[dict[str, str]] = {
             target TEXT NOT NULL,
             attempt_number INTEGER NOT NULL DEFAULT 1 CHECK (attempt_number > 0),
             status TEXT NOT NULL CHECK (
-                status IN ('PREPARED', 'SUBMITTED', 'CONFIRMED', 'UNKNOWN', 'FAILED')
+                status IN ('PREPARED', 'SUBMITTED', 'CONFIRMED', 'UNKNOWN', 'FAILED', 'NEEDS_OPERATOR')
             ),
             platform_id TEXT,
             platform_url TEXT,
@@ -368,6 +369,19 @@ def migrate_events_queue(connection: sqlite3.Connection) -> None:
     )
     connection.execute("DROP TABLE events_queue_legacy")
 
+def migrate_publication_attempts(connection: sqlite3.Connection) -> None:
+    """Add the explicit operator fallback state without losing ledger history."""
+    row = connection.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='publication_attempts'").fetchone()
+    if row is None or "NEEDS_OPERATOR" in str(row[0] or ""):
+        return
+    connection.execute("ALTER TABLE publication_attempts RENAME TO publication_attempts_legacy")
+    connection.execute(SCHEMA["publication_attempts"])
+    connection.execute("""INSERT INTO publication_attempts
+        (id,event_id,channel,content_hash,target,attempt_number,status,platform_id,platform_url,detail,created_at,updated_at)
+        SELECT id,event_id,channel,content_hash,target,attempt_number,status,platform_id,platform_url,detail,created_at,updated_at
+        FROM publication_attempts_legacy""")
+    connection.execute("DROP TABLE publication_attempts_legacy")
+
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
@@ -378,8 +392,8 @@ def parse_args() -> argparse.Namespace:
         "--database",
         "-d",
         type=Path,
-        default=Path("../db/events.db"),
-        help="SQLite database path (default: ../db/events.db).",
+        default=DATABASE_PATH,
+        help="SQLite database path (default: CORE_DATA/db/events.db).",
     )
     return parser.parse_args()
 
@@ -392,6 +406,7 @@ def initialize_database(database_path: Path) -> None:
     with connect_database(resolved_path) as connection:
 
         migrate_events_queue(connection)
+        migrate_publication_attempts(connection)
         for table_name, statement in SCHEMA.items():
             connection.execute(statement)
             LOGGER.info("Table '%s' checked or created successfully.", table_name)

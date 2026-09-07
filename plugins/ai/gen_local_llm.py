@@ -20,6 +20,7 @@ from typing import Any, Final
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from core.event_protocol import emit_result
 from core.database import connect_database
+from core.paths import DATABASE_PATH
 from core.processes import popen_process_group, terminate_process_group
 from uuid import uuid4
 
@@ -35,7 +36,7 @@ from core.rag_index import search  # noqa: E402
 PLUGIN_NAME: Final = "Lokale RTX 3090 Generator"
 PLUGIN_TYPE: Final = "ai"
 PLUGIN_ICON: Final = "🧠"
-DEFAULT_DATABASE: Final = PROJECT_ROOT / "db" / "events.db"
+DEFAULT_DATABASE: Final = DATABASE_PATH
 OUTPUT_DIRECTORY: Final = PROJECT_ROOT / "vault" / "concepten"
 LOGGER: Final = logging.getLogger("gen_local_llm")
 

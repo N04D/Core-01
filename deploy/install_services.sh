@@ -2,6 +2,11 @@
 set -e
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+CORE_HOME="${CORE_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+CORE_DATA="${CORE_DATA:-${CORE_HOME}/runtime}"
+CORE_USER="${CORE_USER:-${SUDO_USER:-${USER}}}"
+CORE_GROUP="${CORE_GROUP:-$(id -gn "$CORE_USER")}"
+CORE_PYTHON="${CORE_PYTHON:-${CORE_HOME}/venv/bin/python3}"
 
 if [[ "$(id -u)" -eq 0 ]]; then
     SUDO=()
@@ -9,36 +14,26 @@ else
     SUDO=(sudo)
 fi
 
-"${SUDO[@]}" install -o root -g root -m 0644 \
-    "${SCRIPT_DIR}/social-worker.service" \
-    /etc/systemd/system/social-worker.service
-"${SUDO[@]}" install -o root -g root -m 0644 \
-    "${SCRIPT_DIR}/social-watchdog.service" \
-    /etc/systemd/system/social-watchdog.service
-"${SUDO[@]}" install -o root -g root -m 0644 \
-    "${SCRIPT_DIR}/social-scheduler.service" \
-    /etc/systemd/system/social-scheduler.service
-"${SUDO[@]}" install -o root -g root -m 0644 \
-    "${SCRIPT_DIR}/social-telegram-in.service" \
-    /etc/systemd/system/social-telegram-in.service
-"${SUDO[@]}" install -o root -g root -m 0644 \
-    "${SCRIPT_DIR}/social-health-check.service" \
-    /etc/systemd/system/social-health-check.service
-"${SUDO[@]}" install -o root -g root -m 0644 \
-    "${SCRIPT_DIR}/social-rag-indexer.service" \
-    /etc/systemd/system/social-rag-indexer.service
-"${SUDO[@]}" install -o root -g root -m 0644 \
-    "${SCRIPT_DIR}/social-nightcafe.service" \
-    /etc/systemd/system/social-nightcafe.service
-"${SUDO[@]}" install -o root -g root -m 0644 \
-    "${SCRIPT_DIR}/social-nightcafe.timer" \
-    /etc/systemd/system/social-nightcafe.timer
-"${SUDO[@]}" install -o root -g root -m 0644 \
-    "${SCRIPT_DIR}/social-gdrive-sync.service" \
-    /etc/systemd/system/social-gdrive-sync.service
-"${SUDO[@]}" install -o root -g root -m 0644 \
-    "${SCRIPT_DIR}/social-gdrive-sync.timer" \
-    /etc/systemd/system/social-gdrive-sync.timer
+render_unit() {
+    local source="$1" target="$2" rendered
+    rendered="$(mktemp)"
+    sed -e "s#@CORE_HOME@#${CORE_HOME}#g" \
+        -e "s#@CORE_DATA@#${CORE_DATA}#g" \
+        -e "s#@CORE_USER@#${CORE_USER}#g" \
+        -e "s#@CORE_GROUP@#${CORE_GROUP}#g" \
+        -e "s#@CORE_PYTHON@#${CORE_PYTHON}#g" "$source" > "$rendered"
+    "${SUDO[@]}" install -o root -g root -m 0644 "$rendered" "$target"
+    rm -f "$rendered"
+}
+
+render_unit "${SCRIPT_DIR}/social-worker.service" /etc/systemd/system/social-worker.service
+render_unit "${SCRIPT_DIR}/social-watchdog.service" /etc/systemd/system/social-watchdog.service
+for unit in social-scheduler social-telegram-in social-health-check social-rag-indexer social-nightcafe social-gdrive-sync; do
+    render_unit "${SCRIPT_DIR}/${unit}.service" "/etc/systemd/system/${unit}.service"
+done
+for timer in social-nightcafe social-gdrive-sync; do
+    render_unit "${SCRIPT_DIR}/${timer}.timer" "/etc/systemd/system/${timer}.timer"
+done
 
 "${SUDO[@]}" systemctl daemon-reload
 "${SUDO[@]}" systemctl enable --now social-worker.service

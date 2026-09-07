@@ -4,27 +4,19 @@
 from __future__ import annotations
 
 import json
-import os
-import subprocess
-import threading
 from datetime import datetime, timezone
-from pathlib import Path
-from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
+from core.database import connect_database
+from core.paths import CORE_ROOT, DATABASE_PATH, MEDIA_DIR, PUBLISHED_DIR
 
-ROOT = Path(__file__).resolve().parent
-DB = ROOT / "db" / "events.db"
-AUTOMATION = ROOT / "plugins" / "media" / "nightcafe_automation.py"
-MEDIA_DIR = ROOT / "vault" / "media" / "nightcafe"
-PUBLISHED_MEDIA_DIR = ROOT / "vault" / "media" / "published"
+ROOT = CORE_ROOT
+DB = DATABASE_PATH
+MEDIA_DIR = MEDIA_DIR / "nightcafe"
+PUBLISHED_MEDIA_DIR = PUBLISHED_DIR / "media"
 
 app = FastAPI(title="NightCafe Local Generation API", version="1.0")
-_jobs: dict[str, dict[str, object]] = {}
-_lock = threading.Lock()
-
-
 class GenerationRequest(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=12000)
     model: str | None = None
@@ -41,46 +33,34 @@ class OverlayRequest(BaseModel):
     font_size: int = Field(default=34, ge=8, le=160)
 
 
-def _run_job(job_id: str, request: GenerationRequest) -> None:
-    command = [str(ROOT / "venv" / "bin" / "python3"), str(AUTOMATION), "--db", str(DB), "--prompt", request.prompt,
-               "--name", "API Generation", "--sequence", "1", "--run-date", datetime.now(timezone.utc).strftime("%Y-%m-%d")]
-    if request.live:
-        command.append("--live")
-    else:
-        command.append("--simulate")
-    for flag, value in (("--model", request.model), ("--format", request.format), ("--negative-prompt", request.negative_prompt)):
-        if value:
-            command.extend([flag, value])
-    if request.steps is not None:
-        command.extend(["--steps", str(request.steps)])
-    env = os.environ.copy()
-    try:
-        completed = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=700, env=env, check=False)
-        lines = [line for line in completed.stdout.splitlines() if line.strip()]
-        result = json.loads(lines[-1]) if lines else {"error": completed.stderr[-2000:]}
-        status = "COMPLETED" if completed.returncode == 0 else "FAILED"
-    except Exception as exc:
-        result, status = {"error": str(exc)}, "FAILED"
-    with _lock:
-        _jobs[job_id].update({"status": status, "result": result})
-
-
 @app.post("/api/nightcafe/generations", status_code=202)
 def start_generation(request: GenerationRequest) -> dict[str, object]:
-    job_id = uuid4().hex
-    with _lock:
-        _jobs[job_id] = {"status": "RUNNING", "created_at": datetime.now(timezone.utc).isoformat()}
-    threading.Thread(target=_run_job, args=(job_id, request), daemon=True).start()
-    return {"job_id": job_id, "status": "RUNNING"}
+    payload = request.model_dump() if hasattr(request, "model_dump") else request.dict()
+    payload["mode"] = "LIVE" if request.live else "SIMULATED"
+    with connect_database(DB) as connection:
+        route = connection.execute(
+            "SELECT target_plugin_name FROM event_routes WHERE event_type='NIGHTCAFE_GENERATE'"
+        ).fetchone()
+        if route is None:
+            raise HTTPException(status_code=503, detail="NIGHTCAFE_GENERATE route is not registered")
+        cursor = connection.execute(
+            "INSERT INTO events_queue(event_type,payload,status,next_attempt_at) VALUES (?,?, 'PENDING', CURRENT_TIMESTAMP)",
+            ("NIGHTCAFE_GENERATE", json.dumps(payload, ensure_ascii=False)),
+        )
+        connection.commit()
+        event_id = int(cursor.lastrowid)
+    return {"job_id": str(event_id), "event_id": event_id, "status": "PENDING"}
 
 
 @app.get("/api/nightcafe/generations/{job_id}")
 def generation_status(job_id: str) -> dict[str, object]:
-    with _lock:
-        job = _jobs.get(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="generation not found")
-    return {"job_id": job_id, **job}
+    try: event_id = int(job_id)
+    except ValueError: raise HTTPException(status_code=400, detail="invalid generation id")
+    with connect_database(DB, read_only=True) as connection:
+        row = connection.execute("SELECT id,status,payload,error_log,created_at,updated_at FROM events_queue WHERE id=? AND event_type='NIGHTCAFE_GENERATE'", (event_id,)).fetchone()
+    if row is None: raise HTTPException(status_code=404, detail="generation not found")
+    payload = json.loads(row["payload"] or "{}")
+    return {"job_id": str(row["id"]), "event_id": row["id"], "status": row["status"], "result": payload.get("result") or payload.get("nightcafe"), "error": row["error_log"], "created_at": row["created_at"], "updated_at": row["updated_at"]}
 
 
 @app.get("/api/nightcafe/results")

@@ -23,13 +23,14 @@ if __package__ in {None, ""}:
 
 from core.browser_robustness import capture_page_trace, capture_sanitized_diagnostic, find_control, find_prompt_input
 from core.database import connect_database
+from core.paths import SESSIONS_DIR, MEDIA_DIR, DATABASE_PATH
 from core.event_protocol import emit_result
 
 PROJECT_ROOT: Final = Path(__file__).resolve().parents[2]
-DEFAULT_DB: Final = PROJECT_ROOT / "db" / "events.db"
-DEFAULT_AUTH: Final = PROJECT_ROOT / "config" / "nightcafe_auth.json"
-DEFAULT_OUTPUT: Final = PROJECT_ROOT / "vault" / "media" / "nightcafe"
-SOURCE_KEY: Final = "nightcafe-image-prompts"
+DEFAULT_DB: Final = DATABASE_PATH
+DEFAULT_AUTH: Final = SESSIONS_DIR / "nightcafe_auth.json"
+DEFAULT_OUTPUT: Final = MEDIA_DIR / "nightcafe"
+SOURCE_KEY: Final = "nightcafe-99-names"
 PLUGIN_NAME: Final = "NightCafe Daily Stock Generator"
 LOGGER = logging.getLogger("nightcafe_automation")
 MOCK_PNG: Final = base64.b64decode(
@@ -104,7 +105,7 @@ def register_asset(db_path: Path, path: Path, prompt: str, metadata: dict[str, o
                VALUES (?,?,?,?,?,1,CURRENT_TIMESTAMP) ON CONFLICT(source_key) DO UPDATE SET
                display_name=excluded.display_name,root_path=excluded.root_path,is_active=1,
                last_indexed_at=CURRENT_TIMESTAMP""",
-            (SOURCE_KEY, "NightCafe Image Prompt Generator", "nightcafe", str(path.parent), json.dumps({"managed": True})),
+            (SOURCE_KEY, "NightCafe - 99 Names", "nightcafe", str(path.parent), json.dumps({"managed": True})),
         )
         source_id = int(db.execute("SELECT id FROM media_sources WHERE source_key=?", (SOURCE_KEY,)).fetchone()[0])
         db.execute(

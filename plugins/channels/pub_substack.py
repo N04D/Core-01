@@ -20,6 +20,7 @@ from uuid import uuid4
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from core.event_protocol import begin_submission, emit_result, update_publication
 from core.database import connect_database
+from core.paths import SESSIONS_DIR
 
 
 PLUGIN_NAME: Final = "Substack Publisher"
@@ -27,7 +28,7 @@ PLUGIN_TYPE: Final = "channel"
 PLUGIN_ICON: Final = "📰"
 PROJECT_ROOT: Final = Path(__file__).resolve().parents[2]
 DEFAULT_DATABASE: Final = Path("../db/events.db")
-DEFAULT_AUTH: Final = PROJECT_ROOT / "config" / "substack_auth.json"
+DEFAULT_AUTH: Final = SESSIONS_DIR / "substack_auth.json"
 SCREENSHOT_DIR: Final = PROJECT_ROOT / "vault" / "logs" / "screenshots"
 FRONTMATTER_PATTERN: Final = re.compile(
     r"\A---[ \t]*\r?\n(?P<header>.*?)\r?\n---[ \t]*\r?\n?(?P<body>.*)\Z",

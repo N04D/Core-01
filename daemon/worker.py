@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.event_protocol import PluginResult, parse_result
 from core.database import connect_database
 from core.processes import popen_process_group, terminate_process_group
+from core.paths import DATABASE_PATH
 
 try:
     from dotenv import load_dotenv
@@ -61,7 +62,7 @@ def parse_args() -> argparse.Namespace:
         "--database",
         "-d",
         type=Path,
-        default=Path(__file__).resolve().parent.parent / "db" / "events.db",
+        default=DATABASE_PATH,
         help="Path to the SQLite database.",
     )
     parser.add_argument(
