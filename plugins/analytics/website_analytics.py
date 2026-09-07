@@ -173,8 +173,11 @@ def aggregate_event(database: Path, payload: dict[str, Any]) -> tuple[str, dict[
         performance = aggregate_publication(connection, int(attempt_id), str(payload.get("window", "lifetime")), mode=mode, emit_feedback=True)
         if performance is None:
             raise AnalyticsError("no analytics snapshot exists for publication")
-        evergreen_processed, evergreen_flagged = analyze_normalized(database, mode="REAL")
-        performance["evergreen"] = {"processed": evergreen_processed, "flagged": evergreen_flagged} if mode == "REAL" else {"processed": 0, "flagged": 0}
+        if mode == "REAL":
+            evergreen_processed, evergreen_flagged = analyze_normalized(database, mode="REAL")
+            performance["evergreen"] = {"processed": evergreen_processed, "flagged": evergreen_flagged}
+        else:
+            performance["evergreen"] = {"processed": 0, "flagged": 0}
     return "SIMULATED" if mode == "SIMULATED" else "COMPLETED", {"performance": performance, "feedback_event_id": performance.get("feedback_event_id")}, {}
 
 

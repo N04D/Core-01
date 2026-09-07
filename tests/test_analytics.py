@@ -15,6 +15,7 @@ from plugins.analytics.website_analytics import (
     PlausibleProvider,
     _publication_target,
     collect_event,
+    aggregate_event,
     register_plugin,
 )
 
@@ -114,6 +115,40 @@ def test_simulated_and_real_performance_are_isolated(tmp_path: Path):
         assert conn.execute("SELECT COUNT(*) FROM content_performance WHERE mode='SIMULATED'").fetchone()[0] == 0
         assert aggregate_publication(conn, int(attempt), "24h", mode="SIMULATED")["metrics"]["views"] == 10
         assert conn.execute("SELECT COUNT(*) FROM content_performance WHERE mode='SIMULATED'").fetchone()[0] == 1
+
+
+def test_simulated_aggregate_never_runs_real_evergreen_analysis(monkeypatch, tmp_path: Path):
+    db = tmp_path / "events.db"
+    initialize_database(db)
+    with connect_database(db) as conn:
+        attempt = conn.execute("INSERT INTO publication_attempts(event_id,channel,content_hash,target,status) VALUES (?,?,?,?,?) RETURNING id", (1, "PUBLISH_MARKDOWN_GIT", "h", "t", "CONFIRMED")).fetchone()[0]
+        record_snapshot(conn, AnalyticsSnapshot("fixture", "markdown_git", f"publication:{attempt}", None, {"views": 100, "likes": 50}, {"metrics": {"views": 100, "likes": 50}}, "24h", "SIMULATED", int(attempt)))
+        before = conn.execute("SELECT COUNT(*) FROM evergreen_posts").fetchone()[0]
+    import plugins.analytics.website_analytics as website
+    monkeypatch.setattr(website, "analyze_normalized", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("simulated aggregation invoked evergreen analysis")))
+    outcome, result, _ = aggregate_event(db, {"publication_attempt_id": int(attempt), "window": "24h", "mode": "SIMULATED"})
+    assert outcome == "SIMULATED"
+    assert result["performance"]["evergreen"] == {"processed": 0, "flagged": 0}
+    with connect_database(db, read_only=True) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM evergreen_posts").fetchone()[0] == before
+        assert conn.execute("SELECT mode FROM content_performance WHERE publication_attempt_id=?", (attempt,)).fetchone()[0] == "SIMULATED"
+        feedback = conn.execute("SELECT mode FROM content_feedback WHERE publication_attempt_id=?", (attempt,)).fetchone()
+        assert feedback[0] == "SIMULATED"
+
+
+def test_real_aggregate_runs_real_evergreen_analysis(monkeypatch, tmp_path: Path):
+    db = tmp_path / "events.db"
+    initialize_database(db)
+    with connect_database(db) as conn:
+        attempt = conn.execute("INSERT INTO publication_attempts(event_id,channel,content_hash,target,status) VALUES (?,?,?,?,?) RETURNING id", (1, "PUBLISH_MARKDOWN_GIT", "h", "t", "CONFIRMED")).fetchone()[0]
+        record_snapshot(conn, AnalyticsSnapshot("fixture", "markdown_git", f"publication:{attempt}", None, {"views": 10}, {"metrics": {"views": 10}}, "24h", "REAL", int(attempt)))
+    calls = []
+    import plugins.analytics.website_analytics as website
+    monkeypatch.setattr(website, "analyze_normalized", lambda *args, **kwargs: calls.append(kwargs) or (2, 1))
+    outcome, result, _ = aggregate_event(db, {"publication_attempt_id": int(attempt), "window": "24h", "mode": "REAL"})
+    assert outcome == "COMPLETED"
+    assert calls == [{"mode": "REAL"}]
+    assert result["performance"]["evergreen"] == {"processed": 2, "flagged": 1}
 
 
 def test_attribution_identity_and_invalid_explicit_id(tmp_path: Path):
