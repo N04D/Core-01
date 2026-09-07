@@ -32,6 +32,16 @@ def test_legacy_migration_preserves_existing_destination(tmp_path):
     assert (destination / "db" / "events.db").read_text(encoding="utf-8") == "new"
 
 
+def test_migration_populates_empty_destination(tmp_path):
+    source = tmp_path / "legacy"
+    destination = tmp_path / "runtime"
+    (source / "vault/media").mkdir(parents=True)
+    (source / "vault/media/image.jpg").write_bytes(b"image")
+    actions = migrate(source, destination)
+    assert (destination / "media/image.jpg").read_bytes() == b"image"
+    assert any(action.startswith("CREATE DIR") for action in actions)
+
+
 def test_migration_merges_nested_trees_and_is_idempotent(tmp_path):
     source = tmp_path / "legacy"
     destination = tmp_path / "runtime"
