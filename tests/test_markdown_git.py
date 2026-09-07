@@ -80,14 +80,14 @@ def test_local_write_media_and_commit_stage_only_explicit_files(tmp_path: Path):
     db = tmp_path / "events.db"
     initialize_database(db)
     media = tmp_path / "hero.png"
-    media.write_bytes(b"PNG fixture")
+    media.write_bytes(b"\x89PNG\r\n\x1a\nPNG fixture")
     (repo / "unrelated.txt").write_text("keep", encoding="utf-8")
     event_id = make_event(db, {"title": "Owned Article", "body_markdown": "Hello", "repository_path": str(repo), "commit_enabled": True, "media": [{"path": str(media), "alt": "hero"}]})
     outcome, result, _ = publish_event(db, event_id)
     assert outcome == "COMPLETED"
     assert result["commit_sha"] == git(repo, "rev-parse", "HEAD")
     assert (repo / "content/owned-article.md").is_file()
-    assert (repo / "static/media/hero.png").read_bytes() == b"PNG fixture"
+    assert (repo / "static/media/hero.png").read_bytes() == b"\x89PNG\r\n\x1a\nPNG fixture"
     assert "unrelated.txt" not in git(repo, "show", "--format=", "--name-only", "HEAD").splitlines()
     with connect_database(db, read_only=True) as conn:
         ledger = conn.execute("SELECT status,platform_id,detail FROM publication_attempts WHERE event_id=?", (event_id,)).fetchone()

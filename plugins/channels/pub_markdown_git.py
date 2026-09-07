@@ -307,6 +307,19 @@ def media_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
             raise MarkdownGitError(f"unsupported media type: {source.suffix}")
         if not source.is_file():
             raise MarkdownGitError(f"media file does not exist: {source}")
+        header = source.read_bytes()[:16]
+        valid_signature = {
+            ".png": header.startswith(b"\x89PNG\r\n\x1a\n"),
+            ".jpg": header.startswith(b"\xff\xd8\xff"),
+            ".jpeg": header.startswith(b"\xff\xd8\xff"),
+            ".gif": header.startswith((b"GIF87a", b"GIF89a")),
+            ".webp": len(header) >= 12 and header[:4] == b"RIFF" and header[8:12] == b"WEBP",
+            ".mp3": header.startswith(b"ID3") or (len(header) >= 2 and header[0] == 0xFF and header[1] & 0xE0 == 0xE0),
+            ".mp4": len(header) >= 8 and header[4:8] == b"ftyp",
+            ".svg": b"<svg" in header.lower() or b"<?xml" in header.lower(),
+        }.get(source.suffix.lower(), False)
+        if not valid_signature:
+            raise MarkdownGitError(f"media signature does not match extension: {source.name}")
         items.append({**item, "path": source})
     return items
 
