@@ -459,7 +459,15 @@ def create_app(database_path: Path | None = None) -> Flask:
     def unresolved_publications() -> Any:
         with connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM publication_attempts WHERE status IN ('SUBMITTED','UNKNOWN','NEEDS_OPERATOR') ORDER BY updated_at,id"
+                "SELECT * FROM publication_attempts WHERE status IN ('SUBMITTED','UNKNOWN') ORDER BY updated_at,id"
+            ).fetchall()
+        return jsonify([dict(row) for row in rows])
+
+    @app.get("/api/publication-attempts/operator-queue")
+    def operator_publications() -> Any:
+        with connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM publication_attempts WHERE status='NEEDS_OPERATOR' ORDER BY updated_at,id"
             ).fetchall()
         return jsonify([dict(row) for row in rows])
 

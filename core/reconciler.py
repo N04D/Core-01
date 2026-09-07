@@ -10,7 +10,8 @@ from typing import Protocol, Any
 from core.database import connect_database
 from core.event_protocol import update_publication
 
-UNRESOLVED = ("SUBMITTED", "UNKNOWN")
+AUTOMATIC_STATUSES = ("SUBMITTED", "UNKNOWN")
+OPERATOR_STATUS = "NEEDS_OPERATOR"
 
 class ChannelReconciler(Protocol):
     def reconcile(self, attempt: Any) -> tuple[str, dict[str, Any]]: ...
@@ -21,11 +22,26 @@ class ReconciliationResult:
     status: str
     detail: str
 
-def unresolved_attempts(database: str) -> list[dict[str, Any]]:
+def automatic_reconciliation_candidates(database: str) -> list[dict[str, Any]]:
+    """Return only attempts that are safe candidates for automatic checking."""
     with connect_database(database, read_only=True) as db:
         return [dict(row) for row in db.execute(
-            "SELECT * FROM publication_attempts WHERE status IN ('SUBMITTED','UNKNOWN','NEEDS_OPERATOR') ORDER BY updated_at,id"
+            "SELECT * FROM publication_attempts WHERE status IN ('SUBMITTED','UNKNOWN') ORDER BY updated_at,id"
         )]
+
+
+def operator_required_attempts(database: str) -> list[dict[str, Any]]:
+    """Return the stable human-review queue."""
+    with connect_database(database, read_only=True) as db:
+        return [dict(row) for row in db.execute(
+            "SELECT * FROM publication_attempts WHERE status=? ORDER BY updated_at,id",
+            (OPERATOR_STATUS,),
+        )]
+
+
+def unresolved_attempts(database: str) -> list[dict[str, Any]]:
+    """Backward-compatible view of all unresolved work, without conflating queues."""
+    return automatic_reconciliation_candidates(database) + operator_required_attempts(database)
 
 def reconcile_one(database: str, attempt: dict[str, Any], adapter: ChannelReconciler | None = None) -> ReconciliationResult:
     if adapter is None:
@@ -41,4 +57,4 @@ def reconcile_one(database: str, attempt: dict[str, Any], adapter: ChannelReconc
 
 def reconcile_all(database: str, adapter_by_channel: dict[str, ChannelReconciler] | None = None) -> list[ReconciliationResult]:
     adapters = adapter_by_channel or {}
-    return [reconcile_one(database, attempt, adapters.get(str(attempt["channel"]))) for attempt in unresolved_attempts(database)]
+    return [reconcile_one(database, attempt, adapters.get(str(attempt["channel"]))) for attempt in automatic_reconciliation_candidates(database)]

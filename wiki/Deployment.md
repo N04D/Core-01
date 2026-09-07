@@ -2,11 +2,9 @@
 
 ## Platform
 
-Doelplatform: Debian/Ubuntu Linux op ARM64 (Raspberry Pi 5). De units in deze checkout zijn gegenereerd voor:
-
-- Gebruiker/groep: `infra:infra`
-- Projectroot: `/home/infra/dev`
-- Python: `/home/infra/dev/venv/bin/python3`
+Doelplatformen zijn Debian/Ubuntu Linux op ARM64, x86_64, CPU-only en NVIDIA
+workstations. De units zijn templates en bevatten geen vaste gebruiker,
+checkout of Python-pad.
 
 Pas deze waarden aan wanneer de checkout op een ander absoluut pad of onder een andere gebruiker draait.
 
@@ -34,7 +32,11 @@ chmod +x bootstrap_env.sh
 ./bootstrap_env.sh
 ```
 
-De bootstrap installeert Flatpak/Obsidian en Python-systeempakketten, maakt de vaultstructuur aan en corrigeert eigenaar- en gebruikersrechten.
+De bootstrap installeert Flatpak/Obsidian en Python-systeempakketten, maakt de
+runtime-directorystructuur onder `CORE_DATA` aan en corrigeert eigenaar- en
+gebruikersrechten. Alleen source-controlled `vault/skills/` wordt nog door de
+bootstrap aangemaakt; oude runtime-vaultmappen worden niet verwijderd of
+opnieuw aangemaakt.
 
 ## Virtual environment
 
@@ -102,13 +104,13 @@ journalctl -u social-worker -u social-watchdog -f
 
 ## Productiechecklist
 
-- [ ] `db/events.db` is geïnitialiseerd en schrijfbaar voor de servicegebruiker.
+- [ ] `CORE_DATA/db/events.db` is geïnitialiseerd en schrijfbaar voor de servicegebruiker.
 - [ ] Plugins zijn geregistreerd en event-routes zijn actief.
-- [ ] De volledige venv staat onder `/home/infra/dev/venv`.
+- [ ] `CORE_PYTHON` verwijst naar de venv van deze installatie.
 - [ ] `.env` bevat uitsluitend noodzakelijke configuratie en heeft beperkte rechten.
 - [ ] `config/linkedin_auth.json` heeft mode `0600` wanneer live LinkedIn actief is.
 - [ ] Substack/Medium-sessies zijn via CDP gekoppeld wanneer die kanalen actief zijn.
-- [ ] `vault/`, `db/` en logmappen zijn schrijfbaar voor `infra`.
+- [ ] `CORE_DATA/` en de benodigde logmappen zijn schrijfbaar voor `CORE_USER`.
 - [ ] Mocktests slagen vóór live publicatie wordt ingeschakeld.
 - [ ] Dead-letter queue en screenshots worden operationeel gemonitord.
 
@@ -118,14 +120,14 @@ De web-UI bindt standaard uitsluitend aan `127.0.0.1`:
 
 ```bash
 ./venv/bin/pip install -r dashboard/requirements.txt
-./venv/bin/python3 dashboard/run.py --db db/events.db
+./venv/bin/python3 dashboard/run.py --db "$CORE_DATA/db/events.db"
 ```
 
 Open daarna `http://127.0.0.1:8080`. Gebruik `--host 0.0.0.0` alleen achter
 een vertrouwde firewall of reverse proxy met authenticatie.
 
-Controleer de installatie met:
+Controleer de installatie met (de database uit `CORE_DATA` is de standaard):
 
 ```bash
-./venv/bin/python3 scripts/deployment_doctor.py --db "$CORE_DATA/db/events.db"
+./venv/bin/python3 scripts/deployment_doctor.py
 ```

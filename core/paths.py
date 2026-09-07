@@ -14,8 +14,7 @@ from pathlib import Path
 CORE_ROOT = Path(os.getenv("CORE_HOME", Path(__file__).resolve().parents[1])).expanduser().resolve()
 _configured_data = os.getenv("CORE_DATA")
 # Keep mutable data out of the checkout by default while allowing an explicit
-# CORE_DATA for production. Legacy <repo>/db and <repo>/vault remain readable
-# until migrate_runtime_data.py is run.
+# CORE_DATA for production. Legacy paths remain available as migration sources.
 CORE_DATA = Path(_configured_data).expanduser().resolve() if _configured_data else (CORE_ROOT / "runtime")
 
 DB_DIR = CORE_DATA / "db"

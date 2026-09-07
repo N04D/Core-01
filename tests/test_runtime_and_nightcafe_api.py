@@ -31,6 +31,51 @@ def test_legacy_migration_preserves_existing_destination(tmp_path):
     assert "SKIP exists" in actions[0]
     assert (destination / "db" / "events.db").read_text(encoding="utf-8") == "new"
 
+
+def test_migration_merges_nested_trees_and_is_idempotent(tmp_path):
+    source = tmp_path / "legacy"
+    destination = tmp_path / "runtime"
+    (source / "vault/media/nightcafe/nested").mkdir(parents=True)
+    (source / "vault/media/a.jpg").write_text("a", encoding="utf-8")
+    (source / "vault/media/b.jpg").write_text("b", encoding="utf-8")
+    (source / "vault/media/nightcafe/nested/c.jpg").write_text("c", encoding="utf-8")
+    (source / "vault/media/nightcafe/nested/d.jpg").write_text("d", encoding="utf-8")
+    (destination / "media/nightcafe/nested").mkdir(parents=True)
+    (destination / "media/a.jpg").write_text("existing", encoding="utf-8")
+    (destination / "media/nightcafe/nested/c.jpg").write_text("existing", encoding="utf-8")
+
+    actions = migrate(source, destination)
+    assert (destination / "media/a.jpg").read_text(encoding="utf-8") == "existing"
+    assert (destination / "media/b.jpg").read_text(encoding="utf-8") == "b"
+    assert (destination / "media/nightcafe/nested/c.jpg").read_text(encoding="utf-8") == "existing"
+    assert (destination / "media/nightcafe/nested/d.jpg").read_text(encoding="utf-8") == "d"
+    assert any(action.startswith("SKIP exists") for action in actions)
+    before = sorted(str(path.relative_to(destination)) for path in destination.rglob("*"))
+    second = migrate(source, destination)
+    after = sorted(str(path.relative_to(destination)) for path in destination.rglob("*"))
+    assert before == after
+    assert not any(action.startswith("COPY") for action in second)
+
+
+def test_migration_dry_run_and_missing_source_do_not_modify(tmp_path):
+    source = tmp_path / "legacy"
+    destination = tmp_path / "runtime"
+    (source / "vault/media/nested").mkdir(parents=True)
+    (source / "vault/media/nested/file.jpg").write_text("data", encoding="utf-8")
+    actions = migrate(source, destination, dry_run=True)
+    assert any(action.startswith("CREATE DIR") for action in actions)
+    assert any(action.startswith("COPY") for action in actions)
+    assert not destination.exists()
+    missing = migrate(tmp_path / "missing", tmp_path / "other", dry_run=True)
+    assert any(action.startswith("MISSING source") for action in missing)
+
+
+def test_bootstrap_only_creates_source_controlled_vault_skills():
+    script = Path("bootstrap_env.sh").read_text(encoding="utf-8")
+    assert '"${SCRIPT_DIR}/vault/skills"' in script
+    for legacy_runtime in ("vault/concepten", "vault/gepubliceerd", "vault/research", "vault/logs", "vault/uitgaand"):
+        assert legacy_runtime not in script
+
 def test_nightcafe_dashboard_enqueue_and_persistent_status(tmp_path):
     db = tmp_path / "events.db"
     initialize_database(db)

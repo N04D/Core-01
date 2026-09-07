@@ -41,17 +41,12 @@ mkdir -p \
     "${CORE_DATA}/db" "${CORE_DATA}/media" "${CORE_DATA}/analytics" \
     "${CORE_DATA}/research" "${CORE_DATA}/concepts" "${CORE_DATA}/published" \
     "${CORE_DATA}/logs" "${CORE_DATA}/sessions" "${CORE_DATA}/tmp" \
-    "${SCRIPT_DIR}/vault/skills" \
-    "${SCRIPT_DIR}/vault/concepten" \
-    "${SCRIPT_DIR}/vault/uitgaand" \
-    "${SCRIPT_DIR}/vault/gepubliceerd" \
-    "${SCRIPT_DIR}/vault/research" \
-    "${SCRIPT_DIR}/vault/logs/screenshots"
+    "${SCRIPT_DIR}/vault/skills"
 
 TARGET_USER="${SUDO_USER:-${USER}}"
 TARGET_GROUP="$(id -gn "${TARGET_USER}")"
-"${SUDO[@]}" chown -R "${TARGET_USER}:${TARGET_GROUP}" "${SCRIPT_DIR}/vault" "${CORE_DATA}"
-chmod -R u+rwX "${SCRIPT_DIR}/vault" "${CORE_DATA}"
+"${SUDO[@]}" chown -R "${TARGET_USER}:${TARGET_GROUP}" "${SCRIPT_DIR}/vault/skills" "${CORE_DATA}"
+chmod -R u+rwX "${SCRIPT_DIR}/vault/skills" "${CORE_DATA}"
 
 if command -v nvidia-smi >/dev/null 2>&1; then
     echo "Optional NVIDIA GPU detected: $(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)"

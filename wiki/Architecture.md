@@ -37,13 +37,21 @@ Initialiseren:
 
 ## Inkomende Telegram-hub
 
-`plugins/inputs/telegram_in.py` pollt de Telegram Bot API, bewaart media in `vault/media/` en maakt een Markdown-concept met YAML-frontmatter in `vault/concepten/`. Elk bericht krijgt een afgerond `TELEGRAM_INBOUND` audit-event. Met `--auto-dispatch` ontstaan daarnaast publicatie-events voor uitsluitend actieve LinkedIn Pro-, Substack Pro- en Medium-routes.
+`plugins/inputs/telegram_in.py` pollt de Telegram Bot API, bewaart media in
+`CORE_DATA/media/` en maakt een Markdown-concept in `CORE_DATA/concepts/`. Elk
+bericht krijgt een afgerond `TELEGRAM_INBOUND` audit-event. Met
+`--auto-dispatch` ontstaan daarnaast publicatie-events voor uitsluitend actieve
+LinkedIn Pro-, Substack Pro- en Medium-routes.
 
 ## Modulaire Media Store
 
 Media-adapters implementeren `plugins/media/base.py` en leveren genormaliseerde assets aan de SQLite-index. Het dashboard zoekt uitsluitend in die index. Lokale bestanden worden alleen via een gevalideerd asset-id geserveerd en moeten binnen de geregistreerde bronroot vallen. Een draftkoppeling wordt automatisch overgenomen wanneer dat concept later wordt ingepland.
 
-Dashboarduploads worden atomisch opgeslagen in `vault/media/` en als bron `vault-uploads` in dezelfde Media Store-index geregistreerd. De backend controleert zowel extensie als bestands-signatuur voor PNG, JPG, GIF, WebP, MP4, WebM en MOV. Een databasefout verwijdert het zojuist opgeslagen bestand weer, zodat index en filesystem consistent blijven.
+Dashboarduploads worden atomisch opgeslagen in `CORE_DATA/media/` en als bron
+`vault-uploads` in dezelfde Media Store-index geregistreerd. De backend
+controleert zowel extensie als bestands-signatuur voor PNG, JPG, GIF, WebP, MP4,
+WebM en MOV. Een databasefout verwijdert het zojuist opgeslagen bestand weer,
+zodat index en filesystem consistent blijven.
 
 ## Worker-daemon
 
@@ -58,7 +66,10 @@ Belangrijke omgevingsvariabelen:
 
 ## Folder-watchdog en Obsidian
 
-`daemon/folder_watchdog.py` bewaakt `vault/uitgaand/`. Indien `watchdog` beschikbaar is, worden filesystem-events gebruikt; anders is er een veilige pollingfallback. Zowel nieuw aangemaakte als verplaatste `.md`-bestanden worden verwerkt.
+`daemon/folder_watchdog.py` bewaakt de ingestelde runtime-uitgaandmap. Indien
+`watchdog` beschikbaar is, worden filesystem-events gebruikt; anders is er een
+veilige pollingfallback. Zowel nieuw aangemaakte als verplaatste `.md`-bestanden
+worden verwerkt.
 
 Voorbeeldfrontmatter:
 
@@ -70,7 +81,10 @@ platform: "linkedin"
 ---
 ```
 
-De watcher leest metadata, verplaatst het bestand naar `vault/gepubliceerd/` onder een unieke naam en schrijft daarna een event waarvan `draft_file` naar het definitieve archiefpad wijst. Bij een databasefout wordt de bestandsverplaatsing teruggedraaid.
+De watcher leest metadata, verplaatst het bestand naar `CORE_DATA/published/`
+onder een unieke naam en schrijft daarna een event waarvan `draft_file` naar
+het definitieve archiefpad wijst. Bij een databasefout wordt de
+bestandsverplaatsing teruggedraaid.
 
 ## Skills en veilige templating
 
@@ -88,7 +102,11 @@ Schrijf over {{topic}} met deze context: {{research_context}}
 
 `core/rag_index.py` splitst Markdown uit de Obsidian-vault in overlappende chunks en bewaart genormaliseerde, deterministische feature-hashing-vectoren in SQLite. Retrieval gebruikt cosinusovereenkomst en werkt zonder externe vectorservice of native ML-library.
 
-De AI-generator ververst de index incrementeel en haalt relevante vaultchunks op. Daarna doorloopt ieder concept drie lokale rollen: **Schrijver**, **Factchecker** en **Redacteur**. De Factchecker moet expliciet `APPROVED` geven. Alleen de eindtekst van de Redacteur wordt atomisch in `vault/concepten/` opgeslagen; een afwijzing of lege roloutput laat het event falen.
+De AI-generator ververst de index incrementeel en haalt relevante vaultchunks op.
+Daarna doorloopt ieder concept drie lokale rollen: **Schrijver**,
+**Factchecker** en **Redacteur**. De Factchecker moet expliciet `APPROVED` geven.
+Alleen de eindtekst van de Redacteur wordt atomisch in `CORE_DATA/concepts/`
+opgeslagen; een afwijzing of lege roloutput laat het event falen.
 
 ## Kanaalvarianten en evergreen-content
 

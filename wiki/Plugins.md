@@ -31,7 +31,9 @@ De standaardbron kan via `NIGHTCAFE_MEDIA_DIR` worden ingesteld. Nieuwe provider
 
 Bestand: `plugins/ai/gen_local_llm.py`
 
-Rendert een skill via `core/markdown_parser.py`, stuurt de prompt via `stdin=subprocess.PIPE` naar een lokale modelcommandoregel en bewaart Markdown in `vault/concepten/`.
+Rendert een skill via `core/markdown_parser.py`, stuurt de prompt via
+`stdin=subprocess.PIPE` naar een lokale modelcommandoregel en bewaart Markdown
+in `CORE_DATA/concepts/`.
 
 - Productie: `LOCAL_LLM_COMMAND="ollama run llama3.1:8b"`
 - Test: `LOCAL_LLM_MOCK=1`
@@ -43,7 +45,9 @@ Rendert een skill via `core/markdown_parser.py`, stuurt de prompt via `stdin=sub
 
 Bestand: `plugins/io/crawl_firecrawl.py`
 
-Leest een URL uit de eventpayload, vraagt Markdown op via de lokale Firecrawl REST-API en schrijft een uniek document met bronfrontmatter naar `vault/research/`. De verrijkte payload bevat `filepath`.
+Leest een URL uit de eventpayload, vraagt Markdown op via de lokale Firecrawl
+REST-API en schrijft een uniek document met bronfrontmatter naar
+`CORE_DATA/research/`. De verrijkte payload bevat `filepath`.
 
 - Standaard-API: `http://localhost:3002`
 - Variabelen: `FIRECRAWL_API_URL`, `FIRECRAWL_API_KEY`, `FIRECRAWL_TIMEOUT_SECONDS`
@@ -55,7 +59,8 @@ Leest een URL uit de eventpayload, vraagt Markdown op via de lokale Firecrawl RE
 
 Bestand: `plugins/channels/pub_mock.py`
 
-Veilige zandbakpublisher. Leest `content` of `draft_file` en schrijft de onderschepte publicatie naar `vault/logs/mock_publish_log.md`.
+Veilige zandbakpublisher. Leest `content` of `draft_file` en schrijft de
+onderschepte publicatie naar `CORE_DATA/logs/mock_publish_log.md`.
 
 - Pluginnaam: `Mock Publisher (Test Zandbak)`
 - Eventtype: `PUBLISH_MOCK`
@@ -84,7 +89,7 @@ Uitgebreide adapter voor:
 - Deterministische teasers bij artikelen en links.
 - Recente-postanalytics met likes, views en comments (`--analytics`).
 - Profiel-/bedrijfscontext met headline, bio en ervaring (`--fetch-bio`).
-- JSON- en Markdownartifacts in `vault/analytics/` en `vault/research/`.
+- JSON- en Markdownartifacts in `CORE_DATA/analytics/` en `CORE_DATA/research/`.
 - Multimodale profiel-, bedrijfspagina- en nieuwsbriefcontent via `--text`,
   `--image-path` (JPG/PNG) en `--video-path` (MP4/MOV/M4V/WebM).
 - Playwright file-inputuploads voor afbeeldingen en video, met een gevalideerd
@@ -108,8 +113,8 @@ feedback:
   event-payloadvelden.
 
 Analytics en comments worden als JSON én Markdown opgeslagen in
-`vault/analytics/`; profieldata komt in `vault/research/`. Browserfouten leveren
-een screenshot in `vault/logs/screenshots/`. Zonder
+`CORE_DATA/analytics/`; profieldata komt in `CORE_DATA/research/`. Browserfouten
+leveren een screenshot in `CORE_DATA/logs/screenshots/`. Zonder
 `config/substack_auth.json` ontstaat een veilig `AUTH_REQUIRED`-mockresultaat
 met `substack_contacted: false`; ontbrekende media worden dan gerapporteerd in
 plaats van geüpload.
@@ -126,7 +131,7 @@ Playwright-kanaal voor Medium-verhalen met:
 - Maximaal vijf genormaliseerde publicatietags via `--tags`.
 - `--dry-run` en configureerbare `--headless` browsermodus.
 - Automatische route `PUBLISH_MEDIUM` tijdens `--register`.
-- Fout-screenshots in `vault/logs/screenshots/`.
+- Fout-screenshots in `CORE_DATA/logs/screenshots/`.
 
 Zonder `config/medium_auth.json` wordt een veilig `AUTH_REQUIRED`-resultaat in
 de eventpayload geschreven met `medium_contacted: false` en status

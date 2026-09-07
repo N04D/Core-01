@@ -18,7 +18,12 @@ Dit project bouwt een soeverein, lokaal AI-besturingssysteem voor Linux op een R
 
 ## Huidige status
 
-De lokale mockketen is end-to-end getest: een bestand in `vault/uitgaand/` wordt gedetecteerd, gearchiveerd, als event geclaimd en gepubliceerd via het mockkanaal. LinkedIn ondersteunt veilige dry-runs en een auth-loze mockfallback. Live LinkedIn- en Substack-gebruik gebruikt geldige, lokaal opgeslagen Playwright storage-states. De dashboardknop **Connect sessie** neemt een bestaande Chrome-tab over; wachtwoorden worden niet in de UI bewaard.
+De lokale mockketen is end-to-end getest: een bestand in de ingestelde runtime-
+uitgaandmap wordt gedetecteerd, gearchiveerd, als event geclaimd en gepubliceerd
+via het mockkanaal. LinkedIn ondersteunt veilige dry-runs en een auth-loze
+mockfallback. Live LinkedIn- en Substack-gebruik gebruikt geldige, lokaal
+opgeslagen Playwright storage-states. De dashboardknop **Connect sessie** neemt
+een bestaande Chrome-tab over; wachtwoorden worden niet in de UI bewaard.
 
 ## Belangrijke locaties
 
@@ -29,7 +34,8 @@ De lokale mockketen is end-to-end getest: een bestand in `vault/uitgaand/` wordt
 | `plugins/` | AI-, I/O- en publicatieadapters |
 | `playbooks/` | Orchestrators voor samengestelde workflows |
 | `scripts/` | Self-tests en statusdashboard |
-| `vault/` | Obsidian-data, skills, research, concepten en logs |
+| `vault/skills/` | Source-controlled skills and templates |
+| `CORE_DATA/` | Runtime database, media, research, concepts, publications and logs |
 | `deploy/` | systemd-units en installatieprogramma |
 
 ## Snelle start
