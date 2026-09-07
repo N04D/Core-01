@@ -53,6 +53,24 @@ REST-API en schrijft een uniek document met bronfrontmatter naar
 - Variabelen: `FIRECRAWL_API_URL`, `FIRECRAWL_API_KEY`, `FIRECRAWL_TIMEOUT_SECONDS`
 - Eventtype: `CRAWL_URL`
 
+## Analytics
+
+### Website Analytics (optioneel)
+
+Bestand: `plugins/analytics/website_analytics.py`. Deze adapter registreert
+`ANALYTICS_COLLECT`, `ANALYTICS_AGGREGATE` en
+`CONTENT_PERFORMANCE_UPDATED`. `SIMULATED` events gebruiken deterministische
+fixturedata; echte website-metingen gebruiken Plausible via
+`PLAUSIBLE_SITE_ID`, `PLAUSIBLE_API_KEY` en optioneel
+`PLAUSIBLE_API_BASE_URL`. Tokens blijven in de omgeving.
+
+```bash
+./venv/bin/python3 plugins/analytics/website_analytics.py --register --db "$CORE_DATA/db/events.db"
+```
+
+Snapshots ondersteunen `24h`, `7d`, `30d` en `lifetime`, bewaren historie en
+blijven `UNATTRIBUTED` wanneer een ledger-id of exacte canonical URL ontbreekt.
+
 ## Kanalen
 
 ### Markdown Website / Git Publisher
@@ -159,6 +177,7 @@ de eventpayload geschreven met `medium_contacted: false` en status
 ./venv/bin/python3 plugins/channels/pub_linkedin_pro.py --register --db db/events.db
 ./venv/bin/python3 plugins/channels/pub_substack_pro.py --register --db db/events.db
 ./venv/bin/python3 plugins/channels/pub_medium_pro.py --register --db db/events.db
+./venv/bin/python3 plugins/analytics/website_analytics.py --register --db "$CORE_DATA/db/events.db"
 ```
 
 Routes kunnen idempotent via SQLite worden beheerd. Controleer ze met `scripts/system_status.py` voordat een productieflow start.

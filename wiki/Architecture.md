@@ -172,3 +172,22 @@ overnemen. De helper zoekt op domein, controleert bekende sessiecookies en schri
 Playwright storage-state atomisch met mode `0600` naar `config/*_auth.json`.
 Het dashboard toont de actuele bestandsstatus live; de Home-actie **Connect sessie**
 opent eerst de plugininstellingen en voorkomt dubbele loginprocessen.
+
+## Analytics & feedback loop
+
+De meetlaag gebruikt dezelfde eventbus en worker:
+
+```text
+publicatie-ledger → ANALYTICS_COLLECT → provider
+  → analytics_snapshots/analytics_metrics → ANALYTICS_AGGREGATE
+  → content_performance/content_feedback → CONTENT_PERFORMANCE_UPDATED
+```
+
+Providers leveren een klein `AnalyticsProvider`-contract. De eerste adapter is
+Plausible voor Markdown/Git-websites, naast een deterministische simulated
+provider. Een niet-ondersteunde metric blijft ontbrekend/`NULL`, terwijl een
+gemeten nul expliciet `0` blijft. Snapshots zijn historisch en idempotent op
+provider, external id, window en source hash. Attributie gebruikt uitsluitend
+een publication-attempt-id of exacte canonical URL; onbekende bronnen blijven
+zichtbaar als `UNATTRIBUTED`. Analytics-feedback veroorzaakt geen automatische
+herpublicatie.

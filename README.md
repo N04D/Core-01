@@ -41,6 +41,21 @@ Run the deployment doctor for optional capability diagnostics:
 See `wiki/Architecture.md` and `wiki/Deployment.md` for the complete event,
 session, reconciliation and systemd model.
 
+## Analytics & Feedback Loop
+
+Analytics is an optional event-bus capability. It stores historical normalized
+snapshots, distinguishes unavailable metrics (`NULL`) from measured zero, and
+attributes website metrics to publication ledger records when possible.
+
+```bash
+./venv/bin/python3 plugins/analytics/website_analytics.py --register --db "$CORE_DATA/db/events.db"
+```
+
+Use `mode: SIMULATED` for deterministic offline collection. Configure real
+Plausible collection with `PLAUSIBLE_SITE_ID` and `PLAUSIBLE_API_KEY` in the
+runtime environment. See `wiki/Analytics.md` for events, API endpoints and
+troubleshooting.
+
 ## Markdown website publishing
 
 The optional `Markdown Website Git Publisher` consumes `PUBLISH_MARKDOWN_GIT`

@@ -114,6 +114,24 @@ journalctl -u social-worker -u social-watchdog -f
 - [ ] Mocktests slagen vóór live publicatie wordt ingeschakeld.
 - [ ] Dead-letter queue en screenshots worden operationeel gemonitord.
 
+## Optionele analytics
+
+Analytics is niet vereist voor een gezonde installatie. Registreer de provider
+alleen wanneer je metingen wilt verzamelen:
+
+```bash
+./venv/bin/python3 plugins/analytics/website_analytics.py \
+  --register --db "$CORE_DATA/db/events.db"
+```
+
+Voor Plausible zet je `PLAUSIBLE_SITE_ID`, `PLAUSIBLE_API_KEY` en eventueel
+`PLAUSIBLE_API_BASE_URL` in `.env` of de serviceomgeving. Sleutels komen nooit
+in Git, logs of raw payloads. Een `ANALYTICS_COLLECT` event met
+`mode: SIMULATED` is geschikt voor offline testen; cadence (bijvoorbeeld 24 uur,
+7 dagen en 30 dagen) blijft een expliciete schedulerkeuze. Providerproblemen
+worden als `AUTH_REQUIRED`, `RATE_LIMITED` of `FAILED` zichtbaar zonder de
+basisdeployment ongezond te maken.
+
 ## Lokaal dashboard
 
 De web-UI bindt standaard uitsluitend aan `127.0.0.1`:

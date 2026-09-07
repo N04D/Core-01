@@ -1340,6 +1340,77 @@ def create_app(database_path: Path | None = None) -> Flask:
                     )
         return jsonify(records)
 
+    @app.get("/api/analytics/publications")
+    def analytics_publications() -> Any:
+        """Return latest normalized performance for attributed publications."""
+        channel = request.args.get("channel")
+        limit = min(max(int(request.args.get("limit", "100")), 1), 500)
+        clauses = ["1=1"]
+        params: list[Any] = []
+        if channel:
+            clauses.append("pa.channel=?")
+            params.append(channel)
+        params.append(limit)
+        with connect() as connection:
+            rows = connection.execute(
+                f"""SELECT pa.id AS publication_attempt_id,pa.event_id,pa.channel,pa.platform_url,
+                           pa.updated_at,cp.provider,cp.window,cp.snapshot_id,cp.views,cp.impressions,
+                           cp.unique_views,cp.clicks,cp.reactions,cp.likes,cp.comments,cp.shares,
+                           cp.saves,cp.engagements,cp.engagement_rate,cp.click_rate
+                      FROM publication_attempts pa
+                      LEFT JOIN content_performance cp ON cp.id=(
+                          SELECT id FROM content_performance WHERE publication_attempt_id=pa.id
+                          ORDER BY created_at DESC,id DESC LIMIT 1)
+                     WHERE {' AND '.join(clauses)}
+                     ORDER BY pa.updated_at DESC,pa.id DESC LIMIT ?""", params).fetchall()
+        return jsonify([dict(row) for row in rows])
+
+    @app.get("/api/analytics/publications/<int:publication_id>")
+    def analytics_publication(publication_id: int) -> Any:
+        with connect() as connection:
+            publication = connection.execute("SELECT * FROM publication_attempts WHERE id=?", (publication_id,)).fetchone()
+            if publication is None:
+                abort(404, description="Publication attempt not found")
+            snapshots = connection.execute("""SELECT s.*,GROUP_CONCAT(m.metric_name || '=' || COALESCE(CAST(m.metric_value AS TEXT),'NULL')) AS metrics
+                                             FROM analytics_snapshots s LEFT JOIN analytics_metrics m ON m.snapshot_id=s.id
+                                             WHERE s.publication_attempt_id=? GROUP BY s.id ORDER BY s.collected_at DESC,s.id DESC""", (publication_id,)).fetchall()
+            performance = connection.execute("SELECT * FROM content_performance WHERE publication_attempt_id=? ORDER BY created_at DESC", (publication_id,)).fetchall()
+        return jsonify({"publication": dict(publication), "snapshots": [dict(row) for row in snapshots], "performance": [dict(row) for row in performance]})
+
+    @app.get("/api/analytics/snapshots")
+    def analytics_snapshots() -> Any:
+        provider = request.args.get("provider")
+        channel = request.args.get("channel")
+        metric = request.args.get("metric")
+        limit = min(max(int(request.args.get("limit", "100")), 1), 500)
+        clauses = ["1=1"]
+        params: list[Any] = []
+        if provider:
+            clauses.append("s.provider=?"); params.append(provider)
+        if channel:
+            clauses.append("s.channel=?"); params.append(channel)
+        if metric:
+            clauses.append("m.metric_name=?"); params.append(metric)
+        params.append(limit)
+        with connect() as connection:
+            rows = connection.execute(f"""SELECT s.*,m.metric_name,m.metric_value,m.unit
+                                           FROM analytics_snapshots s LEFT JOIN analytics_metrics m ON m.snapshot_id=s.id
+                                          WHERE {' AND '.join(clauses)} ORDER BY s.collected_at DESC,s.id DESC LIMIT ?""", params).fetchall()
+        return jsonify([dict(row) for row in rows])
+
+    @app.get("/api/analytics/providers")
+    def analytics_providers() -> Any:
+        with connect() as connection:
+            rows = connection.execute("""SELECT pr.plugin_name,pr.is_active,
+                    (SELECT status FROM analytics_collection_runs r ORDER BY r.started_at DESC,r.id DESC LIMIT 1) AS last_status,
+                    (SELECT MAX(collected_at) FROM analytics_snapshots s WHERE s.provider IN ('plausible','simulated-website')) AS last_sync
+                    FROM plugin_registry pr WHERE pr.type='analytics' ORDER BY pr.plugin_name""").fetchall()
+        records = []
+        for row in rows:
+            status = "DISABLED" if not row["is_active"] else (row["last_status"] if row["last_status"] in {"AUTH_REQUIRED", "RATE_LIMITED", "FAILED"} else "READY")
+            records.append({**dict(row), "status": status})
+        return jsonify(records)
+
     @app.errorhandler(400)
     @app.errorhandler(404)
     @app.errorhandler(409)

@@ -15,6 +15,8 @@ Dit project bouwt een soeverein, lokaal AI-besturingssysteem voor Linux op een R
 - Master-playbooks voor research → generatie → publicatie.
 - Read-only statusdashboard, integratietests en systemd-units.
 - Beveiligde browsersessie-koppeling via Chrome CDP voor actieve social-kanalen.
+- Een optionele Analytics & Feedback Loop met historische snapshots,
+  performance-aggregatie en adviesgerichte evergreen-signalen.
 
 ## Huidige status
 
@@ -53,3 +55,6 @@ Bekijk de actuele toestand met:
 ```bash
 ./venv/bin/python3 scripts/system_status.py --db db/events.db
 ```
+
+Analytics blijft optioneel en veroorzaakt nooit automatische herpublicatie. Zie
+[Analytics](Analytics.md) voor configuratie en simulated collection.

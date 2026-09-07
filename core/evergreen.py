@@ -111,6 +111,35 @@ def analyze(database: Path, analytics_dir: Path, threshold: float, evergreen_day
     return processed, evergreen
 
 
+def analyze_normalized(database: Path, threshold: float = 25.0, evergreen_days: int = 90) -> tuple[int, int]:
+    """Evaluate normalized SQLite performance without creating a second engine.
+
+    This is advisory only: it updates the existing ``evergreen_posts`` table;
+    scheduler proposals remain the only path toward a future repurpose.
+    """
+    processed = flagged = 0
+    now = datetime.now(timezone.utc)
+    with connect_database(database) as connection:
+        rows = connection.execute("""SELECT cp.*,pa.platform_url,pa.channel AS publication_channel,pa.created_at AS published_at
+                                     FROM content_performance cp
+                                     LEFT JOIN publication_attempts pa ON pa.id=cp.publication_attempt_id""").fetchall()
+        for row in rows:
+            score = float(row["engagements"] or 0) + float(row["clicks"] or 0) * 0.5 + float(row["shares"] or 0) * 2 + float(row["saves"] or 0) * 2
+            published = parse_time(row["published_at"], now)
+            external_key = hashlib.sha256(f"normalized:{row['publication_attempt_id']}:{row['window']}".encode()).hexdigest()
+            metrics = {name: row[name] for name in ("views", "impressions", "unique_views", "clicks", "reactions", "likes", "comments", "shares", "saves", "engagements", "engagement_rate", "click_rate") if row[name] is not None}
+            eligible = published + timedelta(days=evergreen_days)
+            is_evergreen = int(score >= threshold)
+            with connection:
+                connection.execute("""INSERT INTO evergreen_posts(external_key,platform,source_path,analytics_file,title,content,published_at,metrics,engagement_score,is_evergreen,eligible_after,updated_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+                    ON CONFLICT(external_key) DO UPDATE SET metrics=excluded.metrics,engagement_score=excluded.engagement_score,is_evergreen=excluded.is_evergreen,eligible_after=excluded.eligible_after,updated_at=CURRENT_TIMESTAMP""",
+                    (external_key, row["publication_channel"] or "unknown", None, f"sqlite:analytics_snapshots/{row['snapshot_id']}", None, None, published.isoformat(), json.dumps(metrics), score, is_evergreen, eligible.isoformat()))
+            processed += 1
+            flagged += is_evergreen
+    return processed, flagged
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Analyze analytics for evergreen content.")
     parser.add_argument("--db", type=Path, default=DEFAULT_DATABASE)

@@ -307,6 +307,86 @@ SCHEMA: Final[dict[str, str]] = {
             UNIQUE(evergreen_post_id, status)
         )
     """,
+    "analytics_collection_runs": """
+        CREATE TABLE IF NOT EXISTS analytics_collection_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            provider TEXT NOT NULL,
+            channel TEXT,
+            status TEXT NOT NULL CHECK (status IN ('RUNNING','COMPLETED','SIMULATED','AUTH_REQUIRED','RATE_LIMITED','FAILED')),
+            window TEXT NOT NULL DEFAULT 'lifetime',
+            started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            completed_at TEXT,
+            error_log TEXT
+        )
+    """,
+    "analytics_snapshots": """
+        CREATE TABLE IF NOT EXISTS analytics_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            provider TEXT NOT NULL,
+            channel TEXT,
+            publication_attempt_id INTEGER REFERENCES publication_attempts(id) ON DELETE SET NULL,
+            event_id INTEGER REFERENCES events_queue(id) ON DELETE SET NULL,
+            external_id TEXT,
+            canonical_url TEXT,
+            collected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            window_start TEXT,
+            window_end TEXT,
+            window TEXT NOT NULL DEFAULT 'lifetime',
+            mode TEXT NOT NULL DEFAULT 'REAL' CHECK (mode IN ('REAL','SIMULATED')),
+            attribution_status TEXT NOT NULL DEFAULT 'ATTRIBUTED' CHECK (attribution_status IN ('ATTRIBUTED','UNATTRIBUTED')),
+            raw_payload_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(raw_payload_json)),
+            source_hash TEXT NOT NULL,
+            UNIQUE(provider, external_id, window_start, window_end, source_hash)
+        )
+    """,
+    "analytics_metrics": """
+        CREATE TABLE IF NOT EXISTS analytics_metrics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            snapshot_id INTEGER NOT NULL REFERENCES analytics_snapshots(id) ON DELETE CASCADE,
+            metric_name TEXT NOT NULL,
+            metric_value REAL,
+            unit TEXT NOT NULL DEFAULT 'count',
+            UNIQUE(snapshot_id, metric_name)
+        )
+    """,
+    "content_performance": """
+        CREATE TABLE IF NOT EXISTS content_performance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            publication_attempt_id INTEGER REFERENCES publication_attempts(id) ON DELETE SET NULL,
+            snapshot_id INTEGER NOT NULL REFERENCES analytics_snapshots(id) ON DELETE CASCADE,
+            provider TEXT NOT NULL,
+            channel TEXT,
+            window TEXT NOT NULL,
+            views REAL,
+            impressions REAL,
+            unique_views REAL,
+            clicks REAL,
+            reactions REAL,
+            likes REAL,
+            comments REAL,
+            shares REAL,
+            saves REAL,
+            engagements REAL,
+            engagement_rate REAL,
+            click_rate REAL,
+            age_hours REAL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(snapshot_id, window)
+        )
+    """,
+    "content_feedback": """
+        CREATE TABLE IF NOT EXISTS content_feedback (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            publication_attempt_id INTEGER REFERENCES publication_attempts(id) ON DELETE SET NULL,
+            content_variant_id INTEGER REFERENCES content_variants(id) ON DELETE SET NULL,
+            channel TEXT,
+            performance_window TEXT NOT NULL,
+            performance_score REAL NOT NULL,
+            score_components JSON NOT NULL CHECK (json_valid(score_components)),
+            generated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(publication_attempt_id, performance_window, generated_at)
+        )
+    """,
 }
 
 INDEXES: Final[tuple[str, ...]] = (
@@ -328,6 +408,16 @@ INDEXES: Final[tuple[str, ...]] = (
     "ON nightcafe_daily_runs(status, run_date)",
     "CREATE INDEX IF NOT EXISTS idx_subject_generator_state_updated "
     "ON subject_generator_state(updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_analytics_snapshots_publication "
+    "ON analytics_snapshots(publication_attempt_id, collected_at)",
+    "CREATE INDEX IF NOT EXISTS idx_analytics_snapshots_provider "
+    "ON analytics_snapshots(provider, channel, collected_at)",
+    "CREATE INDEX IF NOT EXISTS idx_analytics_metrics_name "
+    "ON analytics_metrics(metric_name, snapshot_id)",
+    "CREATE INDEX IF NOT EXISTS idx_content_performance_publication "
+    "ON content_performance(publication_attempt_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_feedback_publication "
+    "ON content_feedback(publication_attempt_id, generated_at)",
 )
 
 
