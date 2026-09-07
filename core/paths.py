@@ -1,9 +1,10 @@
 """Canonical source and runtime-data paths for Core-01.
 
 Source code lives below :data:`CORE_ROOT`; mutable databases, media, logs and
-sessions live below :data:`CORE_DATA`.  Existing checkouts remain compatible:
-when ``CORE_DATA`` is unset the historical repository layout is used until the
-operator runs ``scripts/migrate_runtime_data.py``.
+sessions live below :data:`CORE_DATA`. Existing checkouts remain compatible
+through the explicit migration helper: legacy ``db/`` and ``vault/`` files
+remain on disk and are never deleted; set ``CORE_DATA`` and run
+``scripts/migrate_runtime_data.py`` to copy them non-destructively.
 """
 from __future__ import annotations
 
