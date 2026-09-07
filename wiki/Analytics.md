@@ -33,9 +33,13 @@ buiten Git en worden nooit in raw providerdata of logs opgeslagen.
 
 Voor LinkedIn moet `CORE_DATA/sessions/linkedin_auth.json` (of
 `LINKEDIN_AUTH_PATH`) een geldige, mode-600 Playwright storage-state zijn.
-`provider: "linkedin"` selecteert de provider; publicatiekanalen
-`PUBLISH_LINKEDIN` en `PUBLISH_LINKEDIN_PRO` worden alleen bij een ontbrekende
-keuze veilig geïnterpreteerd. SIMULATED LinkedIn-fixtures starten geen browser.
+`provider: "linkedin"` selecteert de provider. Zonder expliciete provider
+worden alleen `LINKEDIN`, `PUBLISH_LINKEDIN` en `PUBLISH_LINKEDIN_PRO` herkend;
+andere kanalen vallen niet naar LinkedIn terug. Generieke feed-, activity- en
+company-list URLs zijn geen publicatie-identiteit. LinkedIn-capability-
+registratie is fail-closed; nul actieve providers blijft systeemgezond.
+LinkedIn-counters worden altijd als `lifetime` opgeslagen, met `collected_at`
+als meetmoment voor 24h/7d/30d-cadans.
 
 ## Events en windows
 

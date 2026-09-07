@@ -1383,7 +1383,14 @@ def create_app(database_path: Path | None = None) -> Flask:
         payload = request.get_json(silent=True) or {}
         if not isinstance(payload, dict):
             abort(400, description="Analytics payload must be an object")
-        payload = {key: value for key, value in payload.items() if key in {"publication_attempt_id", "canonical_url", "external_id", "channel", "window", "mode", "fixture", "dry_run"}}
+        provider = payload.get("provider")
+        if provider is not None:
+            provider = str(provider).strip().lower()
+            if provider not in {"plausible", "linkedin"}:
+                abort(400, description="provider must be plausible or linkedin")
+        payload = {key: value for key, value in payload.items() if key in {"provider", "publication_attempt_id", "canonical_url", "external_id", "channel", "window", "mode", "fixture", "dry_run"}}
+        if provider is not None:
+            payload["provider"] = provider
         with connect() as connection:
             cursor = connection.execute("INSERT INTO events_queue(event_type,payload) VALUES ('ANALYTICS_COLLECT',?)", (json.dumps(payload, ensure_ascii=False),))
             connection.commit()

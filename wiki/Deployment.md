@@ -142,7 +142,9 @@ dispatcher en schakel `LinkedIn Analytics` uit als geen sessie beschikbaar is.
 Een ontbrekende sessie geeft `AUTH_REQUIRED`/`BLOCKED_AUTH` en maakt de basis-
 deployment niet ongezond. Gebruik lifetime-snapshots; latere geplande
 collecties (bijvoorbeeld na 24 uur, 7 dagen en 30 dagen) onderscheiden zich
-door `collected_at`.
+door `collected_at`. Handmatige collectie gebruikt `POST /api/analytics/collect`
+met `provider: "linkedin"`; alleen publicatie-specifieke LinkedIn-permalinks
+worden geaccepteerd, niet feed- of activity-overzichtspagina's.
 
 ## Lokaal dashboard
 

@@ -19,7 +19,9 @@ Dit project bouwt een soeverein, lokaal AI-besturingssysteem voor Linux op een R
   performance-aggregatie en adviesgerichte evergreen-signalen.
 - Analytics-dispatching ondersteunt Plausible en optioneel LinkedIn; beide
   providers zijn afzonderlijk activeerbaar en LinkedIn gebruikt de bestaande
-  Pro storage-state zonder commentaaridentiteiten op te slaan.
+  Pro storage-state zonder commentaaridentiteiten op te slaan. REAL LinkedIn-
+  metingen vereisen een exacte publicatiepermalink; feed-overzichten worden
+  niet automatisch gematcht.
 
 ## Huidige status
 

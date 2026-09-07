@@ -16,6 +16,7 @@ from plugins.analytics.base import AnalyticsProvider, CollectionTarget
 
 
 LINKEDIN_HOSTS = {"linkedin.com", "www.linkedin.com"}
+GENERIC_LINKEDIN_PATHS = {"/feed", "/posts", "/company", "/in"}
 
 
 class LinkedInAnalyticsProviderError(RuntimeError):
@@ -34,13 +35,34 @@ class LinkedInTemporaryError(LinkedInAnalyticsProviderError):
     pass
 
 
-def validate_linkedin_url(value: str | None) -> str:
-    """Accept only HTTPS LinkedIn URLs supplied by an event payload."""
+def is_publication_specific_linkedin_url(value: str | None) -> bool:
+    """Return whether a LinkedIn URL identifies one publication, not a feed."""
     if not value:
-        raise LinkedInInvalidResponse("a LinkedIn post URL is required")
+        return False
     parsed = urlparse(value)
     if parsed.scheme != "https" or parsed.hostname not in LINKEDIN_HOSTS:
-        raise LinkedInInvalidResponse("LinkedIn analytics URL must use an approved HTTPS host")
+        return False
+    path = parsed.path.rstrip("/") or "/"
+    lowered = path.lower()
+    if lowered in GENERIC_LINKEDIN_PATHS:
+        return False
+    if "/recent-activity" in lowered or "/admin/page-posts" in lowered:
+        return False
+    if lowered.startswith("/company/") and lowered.endswith("/posts"):
+        return False
+    if lowered.startswith("/company/") and lowered.endswith("/about"):
+        return False
+    # A specific post normally has an identifier after /posts/ or an activity
+    # URN in /feed/update/. Other broad profile/company pages are not enough.
+    return "/posts/" in lowered or "/feed/update/" in lowered or "urn:li:activity:" in value
+
+
+def validate_linkedin_url(value: str | None) -> str:
+    """Accept only HTTPS LinkedIn URLs identifying one publication."""
+    if not value:
+        raise LinkedInInvalidResponse("a LinkedIn post URL is required")
+    if not is_publication_specific_linkedin_url(value):
+        raise LinkedInInvalidResponse("publication-specific LinkedIn identity is required")
     return value
 
 
@@ -119,6 +141,9 @@ class LinkedInAnalyticsProvider:
         # launch Playwright.
         from plugins.channels.pub_linkedin_pro import browser_page, validated_auth
 
+        # Reject generic feed/list identities before touching the browser or
+        # auth state, preventing accidental first-card attribution.
+        url = validate_linkedin_url(target.canonical_url)
         try:
             auth = validated_auth(auth_path)
         except (PermissionError, ValueError, OSError) as exc:
@@ -126,12 +151,12 @@ class LinkedInAnalyticsProvider:
         if auth is None:
             raise LinkedInAuthRequired("LinkedIn storage state is missing")
 
-        url = validate_linkedin_url(target.canonical_url)
         try:
             with browser_page(auth, bool(metadata.get("headless", True))) as page:
                 page.goto(url, wait_until="domcontentloaded")
                 if "login" in str(page.url).lower() or "checkpoint" in str(page.url).lower():
                     raise LinkedInAuthRequired("LinkedIn session requires authentication")
+                validate_linkedin_url(str(page.url))
                 cards = page.locator("article, div.feed-shared-update-v2")
                 card = cards.first
                 card.wait_for(state="visible", timeout=int(metadata.get("timeout_ms", 30000)))
@@ -172,5 +197,6 @@ __all__ = [
     "LinkedInTemporaryError",
     "normalize_linkedin_metrics",
     "parse_metric",
+    "is_publication_specific_linkedin_url",
     "validate_linkedin_url",
 ]

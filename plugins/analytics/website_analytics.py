@@ -37,6 +37,7 @@ LINKEDIN_PLUGIN_NAME = "LinkedIn Analytics"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DB = DATABASE_PATH
 WINDOWS = {"24h", "7d", "30d", "lifetime"}
+LINKEDIN_CHANNELS = {"LINKEDIN", "PUBLISH_LINKEDIN", "PUBLISH_LINKEDIN_PRO"}
 
 
 class AnalyticsError(RuntimeError):
@@ -162,7 +163,7 @@ def collect_event(database: Path, event_id: int, payload: dict[str, Any]) -> tup
     run_id: int | None = None
     with connect_database(database) as connection:
         attempt_id, url, external_id, channel = _publication_target(connection, payload)
-        if not provider_name and channel and str(channel).upper() in {"PUBLISH_LINKEDIN", "PUBLISH_LINKEDIN_PRO"}:
+        if not provider_name and channel and str(channel).upper() in LINKEDIN_CHANNELS:
             provider_name = "linkedin"
         provider_name = provider_name or "plausible"
         provider_plugins = {"plausible": PLAUSIBLE_PLUGIN_NAME, "linkedin": LINKEDIN_PLUGIN_NAME}
@@ -171,7 +172,9 @@ def collect_event(database: Path, event_id: int, payload: dict[str, Any]) -> tup
         active = connection.execute("SELECT is_active FROM plugin_registry WHERE plugin_name=?", (provider_plugins[provider_name],)).fetchone()
         # Older databases predate provider capability rows; preserve their
         # existing Plausible behavior until registration/migration occurs.
-        if active is not None and not bool(active[0]):
+        if provider_name == "linkedin" and (active is None or not bool(active[0])):
+            raise AnalyticsError("analytics provider is disabled or unregistered: linkedin")
+        if provider_name != "linkedin" and active is not None and not bool(active[0]):
             raise AnalyticsError(f"analytics provider is disabled: {provider_name}")
         if simulated:
             provider: AnalyticsProvider = SimulatedProvider(payload.get("fixture") if isinstance(payload.get("fixture"), dict) else payload, provider_name=provider_name)
@@ -183,7 +186,8 @@ def collect_event(database: Path, event_id: int, payload: dict[str, Any]) -> tup
         try:
             metadata = {"auth_path": os.getenv("LINKEDIN_AUTH_PATH", str(SESSIONS_DIR / "linkedin_auth.json")), "headless": True}
             result = provider.collect(CollectionTarget(url, external_id, window, attempt_id, metadata))
-            snapshot_id = record_snapshot(connection, AnalyticsSnapshot(provider=provider.name, channel=channel, publication_attempt_id=attempt_id, event_id=event_id, external_id=external_id, canonical_url=url, metrics=result["metrics"], raw_payload=result.get("raw", result), window=window, mode="SIMULATED" if simulated else "REAL"))
+            stored_window = "lifetime" if provider_name == "linkedin" else window
+            snapshot_id = record_snapshot(connection, AnalyticsSnapshot(provider=provider.name, channel=channel, publication_attempt_id=attempt_id, event_id=event_id, external_id=external_id, canonical_url=url, metrics=result["metrics"], raw_payload=result.get("raw", result), window=stored_window, mode="SIMULATED" if simulated else "REAL"))
             status = "SIMULATED" if simulated else "COMPLETED"
             connection.execute("UPDATE analytics_collection_runs SET status=?,completed_at=CURRENT_TIMESTAMP WHERE id=?", (status, run_id))
             connection.commit()
@@ -204,7 +208,11 @@ def collect_event(database: Path, event_id: int, payload: dict[str, Any]) -> tup
             connection.execute("UPDATE analytics_collection_runs SET status=?,completed_at=CURRENT_TIMESTAMP,error_log=? WHERE id=?", (run_status, str(exc)[:2000], run_id))
             connection.commit()
             raise
-    return status, {"snapshot_id": snapshot_id, "provider": provider.name, "attribution_status": "ATTRIBUTED" if attempt_id else "UNATTRIBUTED", "window": window}, {"snapshot_id": snapshot_id}
+    result = {"snapshot_id": snapshot_id, "provider": provider.name, "attribution_status": "ATTRIBUTED" if attempt_id else "UNATTRIBUTED", "window": window}
+    if provider_name == "linkedin":
+        result["requested_window"] = window
+        result["stored_window"] = "lifetime"
+    return status, result, {"snapshot_id": snapshot_id}
 
 
 def aggregate_event(database: Path, payload: dict[str, Any]) -> tuple[str, dict[str, Any], dict[str, Any]]:

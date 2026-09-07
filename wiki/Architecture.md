@@ -196,4 +196,7 @@ feedback en dashboardqueries strikt gescheiden; evergreen consumeert alleen
 `REAL`. Website Analytics registreert uitsluitend de twee input-events. Het
 output-event `CONTENT_PERFORMANCE_UPDATED` gaat naar de aparte
 `Analytics Feedback / Evergreen Feedback`-consumer en kan niet teruglussen naar
-de collector.
+de collector. LinkedIn-collecties vereisen een geregistreerde actieve
+capability en een publicatie-specifieke permalink; generieke feeds en
+activity-lijsten worden vóór browsergebruik geweigerd. Cumulatieve LinkedIn-
+metingen worden altijd als `lifetime` opgeslagen.

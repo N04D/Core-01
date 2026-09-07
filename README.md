@@ -61,7 +61,9 @@ See `wiki/Analytics.md` for events, API endpoints and troubleshooting.
 LinkedIn Analytics is an optional second provider behind the same dispatcher.
 It reuses the LinkedIn Pro storage state under `CORE_DATA/sessions/`, collects
 read-only lifetime post metrics, and keeps simulated fixtures isolated from
-REAL feedback and evergreen decisions. See `wiki/LinkedIn-Analytics.md`.
+REAL feedback and evergreen decisions. Manual collection accepts
+`provider=linkedin`; only publication-specific LinkedIn permalinks are valid
+for REAL collection. See `wiki/LinkedIn-Analytics.md`.
 
 ## Markdown website publishing
 

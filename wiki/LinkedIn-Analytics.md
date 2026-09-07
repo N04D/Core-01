@@ -8,6 +8,12 @@ Plausible route. Select it with an event payload such as:
 {"provider":"linkedin", "publication_attempt_id": 42}
 ```
 
+The manual `POST /api/analytics/collect` endpoint preserves this provider
+field and rejects unknown providers before queueing. Without an explicit
+provider, only the explicit channels `LINKEDIN`, `PUBLISH_LINKEDIN`, and
+`PUBLISH_LINKEDIN_PRO` infer LinkedIn; other channels never use broad substring
+matching.
+
 The provider reuses the LinkedIn Pro Playwright storage state at
 `CORE_DATA/sessions/linkedin_auth.json` (or `LINKEDIN_AUTH_PATH`). The file
 must be a Playwright storage-state document with restrictive permissions. A
@@ -22,9 +28,17 @@ collection runs; these are not falsely labelled interval metrics. Views and
 impressions remain separate, as do reactions and likes. Comments are counts
 only. Missing values remain unavailable and measured zero remains zero.
 
-Attribution uses explicit publication ID, platform ID/URN, exact LinkedIn URL,
-or the deterministic `publication:<id>` identity. Text and timestamp matching
-is never used. Only `linkedin.com` HTTPS URLs are accepted.
+Attribution uses explicit publication ID, platform ID/URN, exact publication
+permalink, or the deterministic `publication:<id>` identity. Generic feed,
+recent-activity, company-post listing, and admin listing URLs are rejected.
+Text and timestamp matching is never used. Only publication-specific HTTPS
+URLs on `linkedin.com` are accepted.
+
+The LinkedIn capability must be registered and active for collection. A missing
+capability row fails closed, while a system with zero active analytics providers
+remains healthy. Current v1 publication metrics are cumulative lifetime
+metrics; requested `24h`, `7d`, or `30d` values are cadence hints and are
+stored as `window=lifetime` with the collection timestamp preserved.
 
 `mode=SIMULATED` uses deterministic fixtures without starting Playwright. It
 is stored as SIMULATED and is excluded from normal performance, dashboard and

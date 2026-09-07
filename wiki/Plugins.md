@@ -68,7 +68,10 @@ ondersteunt optioneel `provider: "linkedin"`; de capability `LinkedIn
 Analytics` kan onafhankelijk worden uitgeschakeld zonder de generieke
 eventroute te overschrijven. LinkedIn gebruikt
 `CORE_DATA/sessions/linkedin_auth.json`, verzamelt cumulatieve lifetime-
-postmetrics en slaat geen commentaartekst, namen of cookies op.
+postmetrics en slaat geen commentaartekst, namen of cookies op. Alleen een
+publicatie-specifieke permalink (niet `/feed/`, recente activity- of company-
+listing) mag REAL metrics attribueren; ontbrekende capability-registratie
+wordt fail-closed geweigerd.
 
 ```bash
 ./venv/bin/python3 plugins/analytics/website_analytics.py --register --db "$CORE_DATA/db/events.db"
