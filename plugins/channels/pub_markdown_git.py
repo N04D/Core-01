@@ -391,6 +391,7 @@ def publish_event(database: Path, event_id: int, *, config_path: Path | None = N
         raise MarkdownGitError("push requires commit mode")
     preview = {"target_file": publication["relative_path"], "slug": publication["slug"], "frontmatter": publication["markdown"].split("---", 2)[1].strip(), "markdown": publication["markdown"], "media_actions": [{key: value for key, value in item.items() if key != "path"} for item in publication["media"]], "git_actions": ["git add -- " + publication["relative_path"]] + (["git commit"] if commit_requested else []) + ([f"git push {config.git_remote} {config.default_branch}"] if push_requested else [])}
     if dry_run:
+        validate_repository(config)
         return "SIMULATED", {"preview": preview, "relative_path": publication["relative_path"]}, {}
     validate_repository(config)
     expected_paths = [publication["relative_path"], *(item["target"] for item in publication["media"])]

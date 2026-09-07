@@ -1001,13 +1001,22 @@ def create_app(database_path: Path | None = None) -> Flask:
         response: dict[str, Any] = {"plugin": dict(plugin), "auth": auth_status(plugin_name)}
         if plugin_name == "Markdown Website Git Publisher":
             config_file = Path(os.getenv("MARKDOWN_GIT_CONFIG", PROJECT_ROOT / "config" / "markdown_git.json"))
+            config_values: dict[str, Any] = {}
+            if config_file.is_file():
+                try:
+                    loaded = json.loads(config_file.read_text(encoding="utf-8"))
+                    if isinstance(loaded, dict):
+                        config_values = loaded
+                except (OSError, json.JSONDecodeError):
+                    response["config_error"] = "invalid Markdown Git configuration"
             response["config"] = {
                 "config_file": str(config_file.expanduser().resolve()),
                 "configured": config_file.is_file(),
-                "repository_path": os.getenv("MARKDOWN_GIT_REPOSITORY_PATH", ""),
-                "content_directory": os.getenv("MARKDOWN_GIT_CONTENT_DIRECTORY", "content"),
-                "media_directory": os.getenv("MARKDOWN_GIT_MEDIA_DIRECTORY", "static/media"),
-                "push_enabled": os.getenv("MARKDOWN_GIT_PUSH_ENABLED", "false").lower() in {"1", "true", "yes", "on"},
+                "repository_path": os.getenv("MARKDOWN_GIT_REPOSITORY_PATH", config_values.get("repository_path", "")),
+                "content_directory": os.getenv("MARKDOWN_GIT_CONTENT_DIRECTORY", config_values.get("content_directory", "content")),
+                "media_directory": os.getenv("MARKDOWN_GIT_MEDIA_DIRECTORY", config_values.get("media_directory", "static/media")),
+                "push_enabled": os.getenv("MARKDOWN_GIT_PUSH_ENABLED", str(config_values.get("push_enabled", False))).lower() in {"1", "true", "yes", "on"},
+                "commit_enabled": os.getenv("MARKDOWN_GIT_COMMIT_ENABLED", str(config_values.get("commit_enabled", False))).lower() in {"1", "true", "yes", "on"},
             }
         return jsonify(response)
 
