@@ -200,3 +200,10 @@ de collector. LinkedIn-collecties vereisen een geregistreerde actieve
 capability en een publicatie-specifieke permalink; generieke feeds en
 activity-lijsten worden vóór browsergebruik geweigerd. Cumulatieve LinkedIn-
 metingen worden altijd als `lifetime` opgeslagen.
+## Writer en runtime-data
+
+De dashboard Writer gebruikt Milkdown Crepe als lokale bundel. De editor
+beheert alleen Markdown-bodytekst; frontmatter wordt byte-getrouw apart
+bewaard en bij opslaan teruggeplaatst. `CORE_DATA/concepts` en
+`CORE_DATA/outgoing` zijn de mutable editorroots. De bestaande Drafts-flow
+plaatst opgeslagen Markdown nog steeds via de SQLite-eventbus bij publishers.

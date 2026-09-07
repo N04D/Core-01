@@ -163,3 +163,22 @@ Controleer de installatie met (de database uit `CORE_DATA` is de standaard):
 ```bash
 ./venv/bin/python3 scripts/deployment_doctor.py
 ```
+## Writer-assets
+
+De Flask-dashboardruntime heeft geen Node nodig. Bouw de lokale Milkdown-assets
+eenmalig tijdens deployment of development:
+
+```bash
+npm ci
+npm run build
+```
+
+De gegenereerde `dashboard/static/editor.bundle.*` wordt lokaal door Flask
+geserveerd; er is geen Milkdown CDN. Runtime-editorbestanden staan in
+`$CORE_DATA/concepts` en `$CORE_DATA/outgoing`. Preview en voer de copy-only
+migratie uit voor bestaande legacybestanden:
+
+```bash
+python3 scripts/migrate_runtime_data.py --dry-run
+python3 scripts/migrate_runtime_data.py
+```

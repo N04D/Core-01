@@ -41,6 +41,16 @@ Run the deployment doctor for optional capability diagnostics:
 See `wiki/Architecture.md` and `wiki/Deployment.md` for the complete event,
 session, reconciliation and systemd model.
 
+## Local Markdown Writer
+
+The dashboard uses a locally bundled Milkdown Crepe Writer (no editor CDN).
+Markdown remains the source of truth; mutable concepts and outgoing drafts live
+under `CORE_DATA/concepts` and `CORE_DATA/outgoing`. The Writer preserves YAML
+frontmatter, autosaves after a short debounce, supports Ctrl/Cmd+S, and keeps
+the existing Drafts → event-bus publishing flow. Build the production assets
+with `npm ci && npm run build`; Node is not needed at runtime. See
+`wiki/Writer.md` for migration and troubleshooting.
+
 ## Analytics & Feedback Loop
 
 Analytics is an optional event-bus capability. It stores historical normalized

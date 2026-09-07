@@ -22,6 +22,9 @@ Dit project bouwt een soeverein, lokaal AI-besturingssysteem voor Linux op een R
   Pro storage-state zonder commentaaridentiteiten op te slaan. REAL LinkedIn-
   metingen vereisen een exacte publicatiepermalink; feed-overzichten worden
   niet automatisch gematcht.
+- De dashboard-editor is een lokaal gebundelde Milkdown Crepe Writer. Mutable
+  concepten en uitgaande drafts staan onder `CORE_DATA`; Markdown en eventuele
+  YAML-frontmatter blijven de bron van waarheid.
 
 ## Huidige status
 

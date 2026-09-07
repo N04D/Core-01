@@ -22,6 +22,7 @@ MAPPING = {
     "vault/analytics": "analytics",
     "vault/research": "research",
     "vault/concepten": "concepts",
+    "vault/uitgaand": "outgoing",
     "vault/gepubliceerd": "published",
     "vault/logs": "logs",
 }

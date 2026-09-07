@@ -19,13 +19,14 @@ from werkzeug.utils import secure_filename
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.database import connect_database
 from core.keyring_store import set_secret
-from core.paths import CORE_ROOT, DATABASE_PATH, SESSIONS_DIR
+from core.paths import CORE_ROOT, CONCEPTS_DIR, DATABASE_PATH, OUTGOING_DIR, SESSIONS_DIR
 
 
 PROJECT_ROOT: Final = CORE_ROOT
 DEFAULT_DATABASE: Final = DATABASE_PATH
 VAULT_ROOT: Final = CORE_ROOT / "vault"  # source templates remain in the repository
 EDITABLE_AREAS: Final = {"concepten", "uitgaand"}
+EDITOR_AREAS: Final = {"concepten": CONCEPTS_DIR, "uitgaand": OUTGOING_DIR}
 MEDIA_EXTENSIONS: Final = {
     ".jpg": "image",
     ".jpeg": "image",
@@ -95,7 +96,7 @@ def create_app(database_path: Path | None = None) -> Flask:
     def safe_markdown_path(area: str, relative_path: str) -> Path:
         if area not in EDITABLE_AREAS:
             abort(400, description="Onbekend vaultgebied")
-        root = (VAULT_ROOT / area).resolve()
+        root = EDITOR_AREAS[area].resolve()
         candidate = (root / relative_path).resolve()
         try:
             candidate.relative_to(root)
@@ -303,7 +304,7 @@ def create_app(database_path: Path | None = None) -> Flask:
                 "queue": queue,
                 "dead_letters": dead_letters,
                 "active_plugins": active_plugins,
-                "drafts": len(list((VAULT_ROOT / "concepten").glob("*.md"))),
+                "drafts": len(list(EDITOR_AREAS["concepten"].glob("*.md"))),
                 "publications": len(list((VAULT_ROOT / "gepubliceerd").glob("*.md"))),
             }
         )
@@ -549,9 +550,9 @@ def create_app(database_path: Path | None = None) -> Flask:
     def planning_feed() -> Any:
         """Return filterable draft, schedule, publication, and error records."""
         records: list[dict[str, Any]] = []
-        concept_root = VAULT_ROOT / "concepten"
+        concept_root = EDITOR_AREAS["concepten"]
         for path in sorted(concept_root.glob("*.md"), key=lambda item: item.stat().st_mtime, reverse=True):
-            item = artifact_record(path)
+            item = {"name": path.name, "path": str(path.relative_to(concept_root)), "size": path.stat().st_size, "modified_at": datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()}
             item.update({"kind": "draft", "status_group": "DRAFT", "channel": None, "content_type": "text"})
             records.append(item)
         with connect() as connection:
@@ -690,8 +691,8 @@ def create_app(database_path: Path | None = None) -> Flask:
     @app.get("/api/media-store/targets")
     def media_store_targets() -> Any:
         drafts = [
-            {"target_type": "DRAFT", "target_ref": str(path.relative_to(VAULT_ROOT / "concepten")), "label": path.name}
-            for path in sorted((VAULT_ROOT / "concepten").glob("*.md"), key=lambda item: item.stat().st_mtime, reverse=True)
+            {"target_type": "DRAFT", "target_ref": str(path.relative_to(EDITOR_AREAS["concepten"])), "label": path.name}
+            for path in sorted(EDITOR_AREAS["concepten"].glob("*.md"), key=lambda item: item.stat().st_mtime, reverse=True)
         ]
         with connect() as connection:
             schedules = connection.execute(
@@ -754,7 +755,7 @@ def create_app(database_path: Path | None = None) -> Flask:
                 draft = safe_markdown_path("concepten", target_ref)
                 if not draft.is_file():
                     abort(404, description="Draft niet gevonden")
-                canonical_ref = str(draft.relative_to(VAULT_ROOT / "concepten"))
+                canonical_ref = str(draft.relative_to(EDITOR_AREAS["concepten"]))
             else:
                 try:
                     schedule_id = int(target_ref)
@@ -895,7 +896,7 @@ def create_app(database_path: Path | None = None) -> Flask:
                        WHERE ml.target_type='DRAFT' AND ml.target_ref=?
                          AND ma.is_available=1 AND ms.is_active=1
                        ORDER BY ml.created_at DESC,ml.id DESC LIMIT 1""",
-                    (str(draft.relative_to(VAULT_ROOT / "concepten")),),
+                    (str(draft.relative_to(EDITOR_AREAS["concepten"])),),
                 ).fetchone()
                 if linked is not None:
                     media = Path(linked["file_path"]).expanduser().resolve()
@@ -1227,10 +1228,10 @@ def create_app(database_path: Path | None = None) -> Flask:
     def list_files(area: str) -> Any:
         if area not in EDITABLE_AREAS:
             abort(400, description="Onbekend vaultgebied")
-        root = VAULT_ROOT / area
+        root = EDITOR_AREAS[area]
         root.mkdir(parents=True, exist_ok=True)
         return jsonify(
-            [artifact_record(path) for path in sorted(root.rglob("*.md"), reverse=True)]
+            [{"name": path.name, "path": str(path.relative_to(root)), "size": path.stat().st_size, "modified_at": datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()} for path in sorted(root.rglob("*.md"), reverse=True)]
         )
 
     @app.get("/api/files/<area>/<path:relative_path>")
@@ -1241,7 +1242,7 @@ def create_app(database_path: Path | None = None) -> Flask:
         return jsonify(
             {
                 "name": path.name,
-                "path": str(path.relative_to(VAULT_ROOT / area)),
+                "path": str(path.relative_to(EDITOR_AREAS[area])),
                 "content": path.read_text(encoding="utf-8"),
             }
         )
@@ -1256,11 +1257,14 @@ def create_app(database_path: Path | None = None) -> Flask:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
         try:
-            temporary.write_text(content, encoding="utf-8")
+            with temporary.open("w", encoding="utf-8", newline="") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
             temporary.replace(path)
         finally:
             temporary.unlink(missing_ok=True)
-        return jsonify({"saved": True, "path": str(path.relative_to(VAULT_ROOT))})
+        return jsonify({"saved": True, "path": f"{area}/{path.relative_to(EDITOR_AREAS[area])}"})
 
     @app.post("/api/drafts/<path:relative_path>/dispatch")
     def dispatch_draft(relative_path: str) -> Any:

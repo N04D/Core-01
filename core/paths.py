@@ -22,6 +22,7 @@ MEDIA_DIR = CORE_DATA / "media"
 ANALYTICS_DIR = CORE_DATA / "analytics"
 RESEARCH_DIR = CORE_DATA / "research"
 CONCEPTS_DIR = CORE_DATA / "concepts"
+OUTGOING_DIR = CORE_DATA / "outgoing"
 PUBLISHED_DIR = CORE_DATA / "published"
 LOGS_DIR = CORE_DATA / "logs"
 SESSIONS_DIR = CORE_DATA / "sessions"
@@ -30,7 +31,7 @@ DATABASE_PATH = DB_DIR / "events.db"
 
 def ensure_runtime_dirs() -> None:
     """Create mutable runtime directories without touching existing files."""
-    for path in (DB_DIR, MEDIA_DIR, ANALYTICS_DIR, RESEARCH_DIR, CONCEPTS_DIR,
+    for path in (DB_DIR, MEDIA_DIR, ANALYTICS_DIR, RESEARCH_DIR, CONCEPTS_DIR, OUTGOING_DIR,
                  PUBLISHED_DIR, LOGS_DIR, SESSIONS_DIR, TMP_DIR):
         path.mkdir(parents=True, exist_ok=True)
 

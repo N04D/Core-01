@@ -1,5 +1,9 @@
 # Python environments and bytecode
 venv/
+node_modules/
+dashboard/static/*.ttf
+dashboard/static/*.woff
+dashboard/static/*.woff2
 __pycache__/
 *.py[cod]
 
