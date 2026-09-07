@@ -28,8 +28,10 @@ collection runs; these are not falsely labelled interval metrics. Views and
 impressions remain separate, as do reactions and likes. Comments are counts
 only. Missing values remain unavailable and measured zero remains zero.
 
-Attribution uses explicit publication ID, platform ID/URN, exact publication
-permalink, or the deterministic `publication:<id>` identity. Generic feed,
+Attribution uses the publication ledger ID and an exact publication permalink.
+A platform ID/URN is retained as supporting ledger evidence, but a standalone
+ID without a navigable permalink is not sufficient for the current collector.
+Generic feed,
 recent-activity, company-post listing, and admin listing URLs are rejected.
 Text and timestamp matching is never used. Only publication-specific HTTPS
 URLs on `linkedin.com` are accepted.
