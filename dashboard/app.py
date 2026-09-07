@@ -1365,6 +1365,19 @@ def create_app(database_path: Path | None = None) -> Flask:
                      ORDER BY pa.updated_at DESC,pa.id DESC LIMIT ?""", params).fetchall()
         return jsonify([dict(row) for row in rows])
 
+    @app.post("/api/analytics/collect")
+    def analytics_collect() -> Any:
+        """Enqueue a manual analytics read through the durable event bus."""
+        payload = request.get_json(silent=True) or {}
+        if not isinstance(payload, dict):
+            abort(400, description="Analytics payload must be an object")
+        payload = {key: value for key, value in payload.items() if key in {"publication_attempt_id", "canonical_url", "external_id", "channel", "window", "mode", "fixture", "dry_run"}}
+        with connect() as connection:
+            cursor = connection.execute("INSERT INTO events_queue(event_type,payload) VALUES ('ANALYTICS_COLLECT',?)", (json.dumps(payload, ensure_ascii=False),))
+            connection.commit()
+            event_id = int(cursor.lastrowid)
+        return jsonify({"event_id": event_id, "status": "PENDING"}), 202
+
     @app.get("/api/analytics/publications/<int:publication_id>")
     def analytics_publication(publication_id: int) -> Any:
         with connect() as connection:

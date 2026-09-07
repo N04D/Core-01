@@ -68,3 +68,5 @@ def test_unattributed_snapshot_is_visible_and_api_exposes_history(tmp_path: Path
     assert client.get("/api/analytics/snapshots?provider=fixture").status_code == 200
     assert client.get("/api/analytics/publications").status_code == 200
     assert client.get("/api/analytics/providers").status_code == 200
+    response = client.post("/api/analytics/collect", json={"mode": "SIMULATED", "external_id": "manual"})
+    assert response.status_code == 202
