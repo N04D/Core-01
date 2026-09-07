@@ -281,21 +281,36 @@ def git_bytes(repo: Path, *args: str, timeout: float = 60.0, check: bool = True)
     return result.stdout if result.returncode == 0 else None
 
 
-def find_complete_commit(repo: Path, manifest: list[dict[str, Any]]) -> str | None:
-    """Find a commit whose tree proves every expected publication file hash."""
-    paths = [item["target"] for item in manifest]
-    candidates = (git(repo, "log", "--all", "--format=%H", "--", *paths, check=False) or "").splitlines()
-    expected = {item["target"]: item["expected_hash"] for item in manifest}
-    for candidate in candidates:
-        names = set((git(repo, "show", "--format=", "--name-only", candidate, check=False) or "").splitlines())
-        if not set(expected).issubset(names):
-            continue
-        if all(
-            _sha256_bytes(git_bytes(repo, "show", f"{candidate}:{path}") or b"") == digest
-            for path, digest in expected.items()
-        ):
-            return candidate
+def tree_matches_manifest(repo: Path, revision: str, manifest: list[dict[str, Any]]) -> bool:
+    """Return whether *revision* contains the complete expected publication tree.
+
+    This deliberately inspects the tree contents rather than the paths changed by
+    one commit.  A publication can be assembled over several commits while the
+    checked-out tree still provides strong, deterministic evidence.
+    """
+    for item in manifest:
+        content = git_bytes(repo, "show", f"{revision}:{item['target']}", check=False)
+        if content is None or _sha256_bytes(content) != str(item["expected_hash"]):
+            return False
+    return True
+
+
+def find_tree_evidence(repo: Path, manifest: list[dict[str, Any]]) -> str | None:
+    """Use the current HEAD tree as evidence for an unchanged publication."""
+    revision = git(repo, "rev-parse", "HEAD", check=False)
+    if revision and tree_matches_manifest(repo, revision, manifest):
+        return revision
     return None
+
+
+def remote_tree_evidence(repo: Path, remote: str, branch: str, revision: str) -> bool:
+    """Return whether a locally-known remote ref proves it contains *revision*.
+
+    We intentionally do not push or contact a remote here.  A missing/stale
+    tracking ref leaves push-enabled idempotency conservative.
+    """
+    remote_ref = git(repo, "rev-parse", f"refs/remotes/{remote}/{branch}", check=False)
+    return bool(remote_ref and remote_ref == revision)
 
 
 def validate_repository(config: GitConfig) -> None:
@@ -466,12 +481,17 @@ def publish_event(database: Path, event_id: int, *, config_path: Path | None = N
             raise MarkdownGitError("publication attempt requires operator reconciliation before retry")
 
     if not changed_paths:
-        evidence_commit = find_complete_commit(config.repository_path, manifest) if commit_requested else None
+        evidence_commit = find_tree_evidence(config.repository_path, manifest) if commit_requested else None
         if commit_requested and evidence_commit is None:
             detail = _detail(publication, config, commit_sha=None, commit_requested=commit_requested, push_requested=push_requested, manifest=manifest)
             with connect_database(database) as connection:
                 update_publication(connection, event_id, EVENT_TYPE, "UNKNOWN", detail=detail)
-            return "UNKNOWN", {"relative_path": publication["relative_path"], "reason": "complete publication commit evidence not found"}, {"markdown_git": {"manifest": {item["target"]: item["expected_hash"] for item in manifest}}}
+            return "UNKNOWN", {"relative_path": publication["relative_path"], "reason": "complete publication tree evidence not found"}, {"markdown_git": {"manifest": {item["target"]: item["expected_hash"] for item in manifest}}}
+        if push_requested and evidence_commit and not remote_tree_evidence(config.repository_path, config.git_remote, config.default_branch, evidence_commit):
+            detail = _detail(publication, config, commit_sha=evidence_commit, commit_requested=commit_requested, push_requested=push_requested, manifest=manifest)
+            with connect_database(database) as connection:
+                update_publication(connection, event_id, EVENT_TYPE, "UNKNOWN", platform_id=evidence_commit, platform_url=publication.get("canonical_url"), detail=detail)
+            return "UNKNOWN", {"relative_path": publication["relative_path"], "commit_sha": evidence_commit, "push": "unknown"}, {"markdown_git": {"relative_path": publication["relative_path"], "commit_sha": evidence_commit, "push": "unknown"}}
         detail = _detail(publication, config, commit_sha=evidence_commit, commit_requested=commit_requested, push_requested=push_requested, manifest=manifest)
         with connect_database(database) as connection:
             update_publication(connection, event_id, EVENT_TYPE, "CONFIRMED", platform_id=evidence_commit, platform_url=publication.get("canonical_url"), detail=detail)
@@ -550,6 +570,9 @@ def reconcile_markdown_attempt(attempt: dict[str, Any]) -> tuple[str, dict[str, 
             commit = git(repository, "cat-file", "-e", f"{detail['commit_sha']}^{{commit}}", check=False)
             if commit is None:
                 return "NEEDS_OPERATOR", {"detail": "recorded commit cannot be found locally"}
+            manifest = [{"target": path, "expected_hash": digest} for path, digest in files.items()]
+            if not tree_matches_manifest(repository, str(detail["commit_sha"]), manifest):
+                return "NEEDS_OPERATOR", {"detail": "recorded commit tree does not match the publication manifest"}
             committed = git(repository, "show", "--format=", "--name-only", str(detail["commit_sha"])) or ""
             changed_files = set(detail.get("changed_files", files.keys()))
             if not changed_files.issubset(set(committed.splitlines())):

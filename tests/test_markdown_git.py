@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from plugins.channels.pub_markdown_git import (
     publish_event,
     register_plugin,
     slugify,
+    tree_matches_manifest,
 )
 
 
@@ -238,6 +240,59 @@ def test_all_unchanged_creates_no_commit_and_does_not_repush(tmp_path: Path):
     assert first == second == "COMPLETED"
     assert second_result["commit_sha"] == first_result["commit_sha"]
     assert git(repo, "rev-parse", "HEAD") == remote_head == git(remote, "rev-parse", "refs/heads/main")
+
+
+def test_all_unchanged_accepts_complete_head_tree_built_across_commits(tmp_path: Path):
+    repo = make_repo(tmp_path)
+    db = tmp_path / "events.db"
+    initialize_database(db)
+    source_hero = png(tmp_path / "hero.png", b"hero")
+    source_chart = png(tmp_path / "chart.png", b"chart")
+    payload = {"title": "Split History", "body_markdown": "body", "repository_path": str(repo), "content_directory": "content/posts", "media_directory": "static/media", "commit_enabled": True, "media": [{"path": str(source_hero)}, {"path": str(source_chart)}]}
+    publication = build_publication(config_for(repo), payload, 1)
+    publication["path"].parent.mkdir(parents=True, exist_ok=True)
+    publication["path"].write_bytes(publication["markdown"].encode("utf-8"))
+    subprocess.run(["git", "add", "--", publication["relative_path"]], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "article"], cwd=repo, check=True, capture_output=True)
+    for item in publication["media"][:1]:
+        target = Path(item["path"])
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(Path(item["source"]).read_bytes())
+    subprocess.run(["git", "add", "--", publication["media"][0]["target"]], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "hero"], cwd=repo, check=True, capture_output=True)
+    item = publication["media"][1]
+    target = Path(item["path"])
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(Path(item["source"]).read_bytes())
+    subprocess.run(["git", "add", "--", item["target"]], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "chart"], cwd=repo, check=True, capture_output=True)
+    head = git(repo, "rev-parse", "HEAD")
+    outcome, result, _ = publish_event(db, make_event(db, payload))
+    assert outcome == "COMPLETED"
+    assert result["idempotent"] is True
+    assert result["commit_sha"] == head
+    assert len(git(repo, "log", "--oneline").splitlines()) == 4
+
+
+def test_head_tree_evidence_rejects_changed_or_missing_file(tmp_path: Path):
+    repo = make_repo(tmp_path)
+    db = tmp_path / "events.db"
+    initialize_database(db)
+    source = png(tmp_path / "hero.png", b"expected")
+    payload = {"title": "Incomplete Tree", "body_markdown": "body", "repository_path": str(repo), "commit_enabled": True, "media": [{"path": str(source)}]}
+    first = make_event(db, payload)
+    publish_event(db, first)
+    target = repo / "static/media/hero.png"
+    target.write_bytes(b"\x89PNG\r\n\x1a\nwrong")
+    subprocess.run(["git", "add", "--", "static/media/hero.png"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "wrong media"], cwd=repo, check=True, capture_output=True)
+    expected = hashlib.sha256(source.read_bytes()).hexdigest()
+    manifest = [{"target": "static/media/hero.png", "expected_hash": expected}]
+    assert not tree_matches_manifest(repo, git(repo, "rev-parse", "HEAD"), manifest)
+    target.unlink()
+    subprocess.run(["git", "rm", "--", "static/media/hero.png"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "remove media"], cwd=repo, check=True, capture_output=True)
+    assert not tree_matches_manifest(repo, git(repo, "rev-parse", "HEAD"), manifest)
 
 
 def test_multiple_media_mixed_states_and_local_write(tmp_path: Path):
