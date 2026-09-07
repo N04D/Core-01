@@ -10,6 +10,8 @@ class CollectionTarget:
     canonical_url: str | None
     external_id: str
     window: str = "lifetime"
+    publication_attempt_id: int | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class AnalyticsProvider(Protocol):

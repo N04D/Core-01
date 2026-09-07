@@ -135,6 +135,15 @@ en evergreen; gebruik `mode=SIMULATED` alleen voor expliciete fixturetests. De
 standaarddatabase van de analytics-plugin is altijd `CORE_DATA/db/events.db`;
 `--db` blijft beschikbaar voor diagnostiek.
 
+LinkedIn Analytics is optioneel en gebruikt dezelfde Playwright-opslag als de
+LinkedIn Pro publisher: `CORE_DATA/sessions/linkedin_auth.json` (mode 600), of
+het pad uit `LINKEDIN_AUTH_PATH`. Registreer beide capability-rijen via de
+dispatcher en schakel `LinkedIn Analytics` uit als geen sessie beschikbaar is.
+Een ontbrekende sessie geeft `AUTH_REQUIRED`/`BLOCKED_AUTH` en maakt de basis-
+deployment niet ongezond. Gebruik lifetime-snapshots; latere geplande
+collecties (bijvoorbeeld na 24 uur, 7 dagen en 30 dagen) onderscheiden zich
+door `collected_at`.
+
 ## Lokaal dashboard
 
 De web-UI bindt standaard uitsluitend aan `127.0.0.1`:

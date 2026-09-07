@@ -63,7 +63,12 @@ Bestand: `plugins/analytics/website_analytics.py`. Deze adapter registreert
 Evergreen Feedback`-consumer gerouteerd. `SIMULATED` events gebruiken deterministische
 fixturedata; echte website-metingen gebruiken Plausible via
 `PLAUSIBLE_SITE_ID`, `PLAUSIBLE_API_KEY` en optioneel
-`PLAUSIBLE_API_BASE_URL`. Tokens blijven in de omgeving.
+`PLAUSIBLE_API_BASE_URL`. Tokens blijven in de omgeving. Dezelfde dispatcher
+ondersteunt optioneel `provider: "linkedin"`; de capability `LinkedIn
+Analytics` kan onafhankelijk worden uitgeschakeld zonder de generieke
+eventroute te overschrijven. LinkedIn gebruikt
+`CORE_DATA/sessions/linkedin_auth.json`, verzamelt cumulatieve lifetime-
+postmetrics en slaat geen commentaartekst, namen of cookies op.
 
 ```bash
 ./venv/bin/python3 plugins/analytics/website_analytics.py --register --db "$CORE_DATA/db/events.db"

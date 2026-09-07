@@ -183,9 +183,10 @@ publicatie-ledger → ANALYTICS_COLLECT → provider
   → content_performance/content_feedback → CONTENT_PERFORMANCE_UPDATED
 ```
 
-Providers leveren een klein `AnalyticsProvider`-contract. De eerste adapter is
-Plausible voor Markdown/Git-websites, naast een deterministische simulated
-provider. Een niet-ondersteunde metric blijft ontbrekend/`NULL`, terwijl een
+Providers leveren een klein `AnalyticsProvider`-contract. De dispatcher kiest
+Plausible voor Markdown/Git-websites of de optionele LinkedIn-provider, naast
+een deterministische simulated provider. LinkedIn hergebruikt de Pro-publisher
+storage-state en voert uitsluitend read-only collectie uit. Een niet-ondersteunde metric blijft ontbrekend/`NULL`, terwijl een
 gemeten nul expliciet `0` blijft. Snapshots zijn historisch en idempotent op
 provider, external id, window en source hash. Attributie gebruikt uitsluitend
 een publication-attempt-id of exacte canonical URL; onbekende bronnen blijven

@@ -17,6 +17,9 @@ Dit project bouwt een soeverein, lokaal AI-besturingssysteem voor Linux op een R
 - Beveiligde browsersessie-koppeling via Chrome CDP voor actieve social-kanalen.
 - Een optionele Analytics & Feedback Loop met historische snapshots,
   performance-aggregatie en adviesgerichte evergreen-signalen.
+- Analytics-dispatching ondersteunt Plausible en optioneel LinkedIn; beide
+  providers zijn afzonderlijk activeerbaar en LinkedIn gebruikt de bestaande
+  Pro storage-state zonder commentaaridentiteiten op te slaan.
 
 ## Huidige status
 

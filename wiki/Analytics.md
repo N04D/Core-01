@@ -16,8 +16,11 @@ automatisch.
 
 ## Provider en configuratie
 
-`plugins/analytics/website_analytics.py` bevat het kleine providercontract, een
-Plausible-adapter en een deterministische `SimulatedProvider`. Registreer hem
+`plugins/analytics/website_analytics.py` bevat de kleine dispatcher en
+providerregistry. Plausible en LinkedIn zijn afzonderlijk activeerbare
+providers; geen van beide neemt de generieke route over. LinkedIn hergebruikt
+de bestaande LinkedIn Pro Playwright-sessie en verzamelt alleen read-only
+postkaart-tellingen. Registreer de dispatcher/provider-capabilities met:
 met:
 
 ```bash
@@ -27,6 +30,12 @@ met:
 Plausible-configuratie komt uit de omgeving: `PLAUSIBLE_SITE_ID`,
 `PLAUSIBLE_API_KEY` en optioneel `PLAUSIBLE_API_BASE_URL`. Secrets blijven
 buiten Git en worden nooit in raw providerdata of logs opgeslagen.
+
+Voor LinkedIn moet `CORE_DATA/sessions/linkedin_auth.json` (of
+`LINKEDIN_AUTH_PATH`) een geldige, mode-600 Playwright storage-state zijn.
+`provider: "linkedin"` selecteert de provider; publicatiekanalen
+`PUBLISH_LINKEDIN` en `PUBLISH_LINKEDIN_PRO` worden alleen bij een ontbrekende
+keuze veilig geïnterpreteerd. SIMULATED LinkedIn-fixtures starten geen browser.
 
 ## Events en windows
 

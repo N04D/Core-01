@@ -58,6 +58,11 @@ explicitly filtered and never feeds evergreen decisions. The feedback output
 event is consumed by a separate feedback plugin, not by Website Analytics.
 See `wiki/Analytics.md` for events, API endpoints and troubleshooting.
 
+LinkedIn Analytics is an optional second provider behind the same dispatcher.
+It reuses the LinkedIn Pro storage state under `CORE_DATA/sessions/`, collects
+read-only lifetime post metrics, and keeps simulated fixtures isolated from
+REAL feedback and evergreen decisions. See `wiki/LinkedIn-Analytics.md`.
+
 ## Markdown website publishing
 
 The optional `Markdown Website Git Publisher` consumes `PUBLISH_MARKDOWN_GIT`

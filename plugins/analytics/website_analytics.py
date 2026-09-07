@@ -18,14 +18,22 @@ from core.analytics import AnalyticsSnapshot, aggregate_publication, record_snap
 from core.database import connect_database
 from core.event_protocol import emit_result
 from core.evergreen import analyze_normalized
-from core.paths import DATABASE_PATH
+from core.paths import DATABASE_PATH, SESSIONS_DIR
 from core.setup_database import initialize_database
 from plugins.analytics.base import AnalyticsProvider, CollectionTarget
 from plugins.analytics.feedback_consumer import register_plugin as register_feedback_plugin
+from plugins.analytics.linkedin_analytics import (
+    LinkedInAnalyticsProvider,
+    LinkedInAuthRequired,
+    LinkedInInvalidResponse,
+    LinkedInTemporaryError,
+)
 
 EVENT_COLLECT = "ANALYTICS_COLLECT"
 EVENT_AGGREGATE = "ANALYTICS_AGGREGATE"
 PLUGIN_NAME = "Website Analytics"
+PLAUSIBLE_PLUGIN_NAME = "Plausible Analytics"
+LINKEDIN_PLUGIN_NAME = "LinkedIn Analytics"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DB = DATABASE_PATH
 WINDOWS = {"24h", "7d", "30d", "lifetime"}
@@ -86,10 +94,9 @@ class PlausibleProvider:
 
 
 class SimulatedProvider:
-    name = "simulated-website"
-
-    def __init__(self, fixture: dict[str, Any] | None = None):
+    def __init__(self, fixture: dict[str, Any] | None = None, provider_name: str = "plausible"):
         self.fixture = fixture or {}
+        self.name = provider_name
 
     def collect(self, target: CollectionTarget) -> dict[str, Any]:
         if isinstance(self.fixture.get("metrics"), dict):
@@ -104,6 +111,12 @@ def register_plugin(connection: Any, enabled: bool = True) -> None:
     executable = str(Path(__file__).resolve())
     with connection:
         connection.execute("INSERT INTO plugin_registry(plugin_name,type,executable_path,icon,is_active) VALUES (?,?,?,?,?) ON CONFLICT(plugin_name) DO UPDATE SET executable_path=excluded.executable_path,type=excluded.type,icon=excluded.icon,is_active=excluded.is_active", (PLUGIN_NAME, "analytics", executable, "📈", int(enabled)))
+        provider_entries = (
+            (PLAUSIBLE_PLUGIN_NAME, "◉", executable),
+            (LINKEDIN_PLUGIN_NAME, "🔗", str(Path(__file__).with_name("linkedin_analytics.py").resolve())),
+        )
+        for provider_name, icon, provider_executable in provider_entries:
+            connection.execute("INSERT INTO plugin_registry(plugin_name,type,executable_path,icon,is_active) VALUES (?,?,?,?,?) ON CONFLICT(plugin_name) DO UPDATE SET executable_path=excluded.executable_path,type=excluded.type,icon=excluded.icon", (provider_name, "analytics", provider_executable, icon, int(enabled)))
         for event_type in (EVENT_COLLECT, EVENT_AGGREGATE):
             connection.execute("INSERT INTO event_routes(event_type,target_plugin_name) VALUES (?,?) ON CONFLICT(event_type) DO UPDATE SET target_plugin_name=excluded.target_plugin_name", (event_type, PLUGIN_NAME))
         register_feedback_plugin(connection, enabled=enabled)
@@ -144,18 +157,48 @@ def collect_event(database: Path, event_id: int, payload: dict[str, Any]) -> tup
     window = str(payload.get("window", "lifetime"))
     if window not in WINDOWS:
         raise AnalyticsError(f"unsupported analytics window: {window}")
+    provider_name = str(payload.get("provider", "")).strip().lower()
     simulated = bool(payload.get("mode", "").upper() == "SIMULATED" or payload.get("dry_run") or payload.get("simulated"))
     run_id: int | None = None
     with connect_database(database) as connection:
         attempt_id, url, external_id, channel = _publication_target(connection, payload)
-        provider: AnalyticsProvider = SimulatedProvider(payload.get("fixture") if isinstance(payload.get("fixture"), dict) else payload) if simulated else PlausibleProvider(base_url=os.getenv("PLAUSIBLE_API_BASE_URL", "https://plausible.io"), site_id=os.getenv("PLAUSIBLE_SITE_ID", ""), token=os.getenv("PLAUSIBLE_API_KEY"))
+        if not provider_name and channel and str(channel).upper() in {"PUBLISH_LINKEDIN", "PUBLISH_LINKEDIN_PRO"}:
+            provider_name = "linkedin"
+        provider_name = provider_name or "plausible"
+        provider_plugins = {"plausible": PLAUSIBLE_PLUGIN_NAME, "linkedin": LINKEDIN_PLUGIN_NAME}
+        if provider_name not in provider_plugins:
+            raise AnalyticsInvalidResponse(f"unknown analytics provider: {provider_name}")
+        active = connection.execute("SELECT is_active FROM plugin_registry WHERE plugin_name=?", (provider_plugins[provider_name],)).fetchone()
+        # Older databases predate provider capability rows; preserve their
+        # existing Plausible behavior until registration/migration occurs.
+        if active is not None and not bool(active[0]):
+            raise AnalyticsError(f"analytics provider is disabled: {provider_name}")
+        if simulated:
+            provider: AnalyticsProvider = SimulatedProvider(payload.get("fixture") if isinstance(payload.get("fixture"), dict) else payload, provider_name=provider_name)
+        elif provider_name == "linkedin":
+            provider = LinkedInAnalyticsProvider()
+        else:
+            provider = PlausibleProvider(base_url=os.getenv("PLAUSIBLE_API_BASE_URL", "https://plausible.io"), site_id=os.getenv("PLAUSIBLE_SITE_ID", ""), token=os.getenv("PLAUSIBLE_API_KEY"))
         run_id = int(connection.execute("INSERT INTO analytics_collection_runs(provider,channel,status,window) VALUES (?,?,?,?) RETURNING id", (provider.name, channel, "RUNNING", window)).fetchone()[0])
         try:
-            result = provider.collect(CollectionTarget(url, external_id, window))
+            metadata = {"auth_path": os.getenv("LINKEDIN_AUTH_PATH", str(SESSIONS_DIR / "linkedin_auth.json")), "headless": True}
+            result = provider.collect(CollectionTarget(url, external_id, window, attempt_id, metadata))
             snapshot_id = record_snapshot(connection, AnalyticsSnapshot(provider=provider.name, channel=channel, publication_attempt_id=attempt_id, event_id=event_id, external_id=external_id, canonical_url=url, metrics=result["metrics"], raw_payload=result.get("raw", result), window=window, mode="SIMULATED" if simulated else "REAL"))
             status = "SIMULATED" if simulated else "COMPLETED"
             connection.execute("UPDATE analytics_collection_runs SET status=?,completed_at=CURRENT_TIMESTAMP WHERE id=?", (status, run_id))
             connection.commit()
+        except LinkedInAuthRequired as exc:
+            connection.execute("UPDATE analytics_collection_runs SET status='AUTH_REQUIRED',completed_at=CURRENT_TIMESTAMP,error_log=? WHERE id=?", (str(exc)[:2000], run_id))
+            connection.commit()
+            raise AnalyticsAuthRequired(str(exc)) from exc
+        except LinkedInInvalidResponse as exc:
+            connection.execute("UPDATE analytics_collection_runs SET status='FAILED',completed_at=CURRENT_TIMESTAMP,error_log=? WHERE id=?", (str(exc)[:2000], run_id))
+            connection.commit()
+            raise AnalyticsInvalidResponse(str(exc)) from exc
+        except LinkedInTemporaryError as exc:
+            connection.execute("UPDATE analytics_collection_runs SET status='FAILED',completed_at=CURRENT_TIMESTAMP,error_log=? WHERE id=?", (str(exc)[:2000], run_id))
+            connection.commit()
+            raise AnalyticsTemporaryError(str(exc)) from exc
         except Exception as exc:
             run_status = "AUTH_REQUIRED" if isinstance(exc, AnalyticsAuthRequired) else "RATE_LIMITED" if isinstance(exc, AnalyticsRateLimited) else "FAILED"
             connection.execute("UPDATE analytics_collection_runs SET status=?,completed_at=CURRENT_TIMESTAMP,error_log=? WHERE id=?", (run_status, str(exc)[:2000], run_id))

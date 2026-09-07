@@ -71,7 +71,7 @@ def load_mock(path: Path, expected_mode: str) -> dict[str, Any]:
     return data
 
 
-def test_bio() -> tuple[Path, Path]:
+def run_bio_check() -> tuple[Path, Path]:
     """Execute and validate the profile-reader mock fallback."""
     before_json = snapshot(RESEARCH_DIR, "linkedin_fetch_bio_mock_*.json")
     before_md = snapshot(RESEARCH_DIR, "linkedin_fetch_bio_mock_*.md")
@@ -101,7 +101,7 @@ def test_bio() -> tuple[Path, Path]:
     return json_path, md_path
 
 
-def test_analytics() -> tuple[Path, Path]:
+def run_analytics_check() -> tuple[Path, Path]:
     """Execute and validate structured analytics mock engagement."""
     before_json = snapshot(ANALYTICS_DIR, "linkedin_analytics_mock_*.json")
     before_md = snapshot(ANALYTICS_DIR, "linkedin_analytics_mock_*.md")
@@ -154,8 +154,8 @@ def main() -> int:
         print(f"[FAIL] Database ontbreekt: {DATABASE}", file=sys.stderr)
         return 2
     try:
-        test_bio()
-        test_analytics()
+        run_bio_check()
+        run_analytics_check()
     except Exception as exc:
         print(f"[FAIL] {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
