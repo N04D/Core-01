@@ -1314,6 +1314,9 @@ def create_app(database_path: Path | None = None) -> Flask:
     @app.get("/api/analytics")
     def analytics() -> Any:
         """Return analytics only for active plugins with matching adapters."""
+        mode = request.args.get("mode", "REAL").upper()
+        if mode not in {"REAL", "SIMULATED", "ALL"}:
+            abort(400, description="mode must be REAL, SIMULATED or ALL")
         with connect() as connection:
             active = {
                 row[0]
@@ -1331,6 +1334,9 @@ def create_app(database_path: Path | None = None) -> Flask:
                         data = json.loads(path.read_text(encoding="utf-8"))
                     except (OSError, json.JSONDecodeError):
                         continue
+                    artifact_mode = "SIMULATED" if isinstance(data, dict) and str(data.get("mode", "")).upper() == "SIMULATED" else "REAL"
+                    if mode != "ALL" and artifact_mode != mode:
+                        continue
                     records.append(
                         {
                             "plugin_name": plugin_name,
@@ -1344,9 +1350,15 @@ def create_app(database_path: Path | None = None) -> Flask:
     def analytics_publications() -> Any:
         """Return latest normalized performance for attributed publications."""
         channel = request.args.get("channel")
+        mode = request.args.get("mode", "REAL").upper()
+        if mode not in {"REAL", "SIMULATED", "ALL"}:
+            abort(400, description="mode must be REAL, SIMULATED or ALL")
         limit = min(max(int(request.args.get("limit", "100")), 1), 500)
         clauses = ["1=1"]
         params: list[Any] = []
+        performance_mode = "" if mode == "ALL" else "AND mode=?"
+        if mode != "ALL":
+            params.append(mode)
         if channel:
             clauses.append("pa.channel=?")
             params.append(channel)
@@ -1359,7 +1371,7 @@ def create_app(database_path: Path | None = None) -> Flask:
                            cp.saves,cp.engagements,cp.engagement_rate,cp.click_rate
                       FROM publication_attempts pa
                       LEFT JOIN content_performance cp ON cp.id=(
-                          SELECT id FROM content_performance WHERE publication_attempt_id=pa.id
+                          SELECT id FROM content_performance WHERE publication_attempt_id=pa.id {performance_mode}
                           ORDER BY created_at DESC,id DESC LIMIT 1)
                      WHERE {' AND '.join(clauses)}
                      ORDER BY pa.updated_at DESC,pa.id DESC LIMIT ?""", params).fetchall()
@@ -1380,14 +1392,21 @@ def create_app(database_path: Path | None = None) -> Flask:
 
     @app.get("/api/analytics/publications/<int:publication_id>")
     def analytics_publication(publication_id: int) -> Any:
+        mode = request.args.get("mode", "REAL").upper()
+        if mode not in {"REAL", "SIMULATED", "ALL"}:
+            abort(400, description="mode must be REAL, SIMULATED or ALL")
         with connect() as connection:
             publication = connection.execute("SELECT * FROM publication_attempts WHERE id=?", (publication_id,)).fetchone()
             if publication is None:
                 abort(404, description="Publication attempt not found")
-            snapshots = connection.execute("""SELECT s.*,GROUP_CONCAT(m.metric_name || '=' || COALESCE(CAST(m.metric_value AS TEXT),'NULL')) AS metrics
+            snapshot_filter = "" if mode == "ALL" else "AND s.mode=?"
+            snapshot_params: tuple[Any, ...] = (publication_id,) if mode == "ALL" else (publication_id, mode)
+            snapshots = connection.execute(f"""SELECT s.*,GROUP_CONCAT(m.metric_name || '=' || COALESCE(CAST(m.metric_value AS TEXT),'NULL')) AS metrics
                                              FROM analytics_snapshots s LEFT JOIN analytics_metrics m ON m.snapshot_id=s.id
-                                             WHERE s.publication_attempt_id=? GROUP BY s.id ORDER BY s.collected_at DESC,s.id DESC""", (publication_id,)).fetchall()
-            performance = connection.execute("SELECT * FROM content_performance WHERE publication_attempt_id=? ORDER BY created_at DESC", (publication_id,)).fetchall()
+                                             WHERE s.publication_attempt_id=? {snapshot_filter} GROUP BY s.id ORDER BY s.collected_at DESC,s.id DESC""", snapshot_params).fetchall()
+            performance_filter = "" if mode == "ALL" else "AND mode=?"
+            performance_params: tuple[Any, ...] = (publication_id,) if mode == "ALL" else (publication_id, mode)
+            performance = connection.execute(f"SELECT * FROM content_performance WHERE publication_attempt_id=? {performance_filter} ORDER BY created_at DESC", performance_params).fetchall()
         return jsonify({"publication": dict(publication), "snapshots": [dict(row) for row in snapshots], "performance": [dict(row) for row in performance]})
 
     @app.get("/api/analytics/snapshots")
@@ -1395,6 +1414,9 @@ def create_app(database_path: Path | None = None) -> Flask:
         provider = request.args.get("provider")
         channel = request.args.get("channel")
         metric = request.args.get("metric")
+        mode = request.args.get("mode", "REAL").upper()
+        if mode not in {"REAL", "SIMULATED", "ALL"}:
+            abort(400, description="mode must be REAL, SIMULATED or ALL")
         limit = min(max(int(request.args.get("limit", "100")), 1), 500)
         clauses = ["1=1"]
         params: list[Any] = []
@@ -1404,6 +1426,8 @@ def create_app(database_path: Path | None = None) -> Flask:
             clauses.append("s.channel=?"); params.append(channel)
         if metric:
             clauses.append("m.metric_name=?"); params.append(metric)
+        if mode != "ALL":
+            clauses.append("s.mode=?"); params.append(mode)
         params.append(limit)
         with connect() as connection:
             rows = connection.execute(f"""SELECT s.*,m.metric_name,m.metric_value,m.unit

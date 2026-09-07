@@ -111,18 +111,21 @@ def analyze(database: Path, analytics_dir: Path, threshold: float, evergreen_day
     return processed, evergreen
 
 
-def analyze_normalized(database: Path, threshold: float = 25.0, evergreen_days: int = 90) -> tuple[int, int]:
+def analyze_normalized(database: Path, threshold: float = 25.0, evergreen_days: int = 90, *, mode: str = "REAL") -> tuple[int, int]:
     """Evaluate normalized SQLite performance without creating a second engine.
 
     This is advisory only: it updates the existing ``evergreen_posts`` table;
     scheduler proposals remain the only path toward a future repurpose.
     """
+    if mode not in {"REAL", "SIMULATED"}:
+        raise ValueError("evergreen analytics mode must be REAL or SIMULATED")
     processed = flagged = 0
     now = datetime.now(timezone.utc)
     with connect_database(database) as connection:
         rows = connection.execute("""SELECT cp.*,pa.platform_url,pa.channel AS publication_channel,pa.created_at AS published_at
                                      FROM content_performance cp
-                                     LEFT JOIN publication_attempts pa ON pa.id=cp.publication_attempt_id""").fetchall()
+                                     LEFT JOIN publication_attempts pa ON pa.id=cp.publication_attempt_id
+                                    WHERE cp.mode=?""", (mode,)).fetchall()
         for row in rows:
             score = float(row["engagements"] or 0) + float(row["clicks"] or 0) * 0.5 + float(row["shares"] or 0) * 2 + float(row["saves"] or 0) * 2
             published = parse_time(row["published_at"], now)

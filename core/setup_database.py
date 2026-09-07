@@ -357,6 +357,7 @@ SCHEMA: Final[dict[str, str]] = {
             provider TEXT NOT NULL,
             channel TEXT,
             window TEXT NOT NULL,
+            mode TEXT NOT NULL DEFAULT 'REAL' CHECK (mode IN ('REAL','SIMULATED')),
             views REAL,
             impressions REAL,
             unique_views REAL,
@@ -383,6 +384,7 @@ SCHEMA: Final[dict[str, str]] = {
             performance_window TEXT NOT NULL,
             performance_score REAL NOT NULL,
             score_components JSON NOT NULL CHECK (json_valid(score_components)),
+            mode TEXT NOT NULL DEFAULT 'REAL' CHECK (mode IN ('REAL','SIMULATED')),
             generated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(publication_attempt_id, performance_window, generated_at)
         )
@@ -509,6 +511,15 @@ def initialize_database(database_path: Path) -> None:
             connection.execute("ALTER TABLE overlay_formats ADD COLUMN y_percent INTEGER NOT NULL DEFAULT 50")
         if "line_settings" not in overlay_columns:
             connection.execute("ALTER TABLE overlay_formats ADD COLUMN line_settings JSON NOT NULL DEFAULT '[]'")
+
+        # Additive analytics migrations. Historical rows are real unless they
+        # were explicitly recorded as simulated by the older schema.
+        performance_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(content_performance)")}
+        if "mode" not in performance_columns:
+            connection.execute("ALTER TABLE content_performance ADD COLUMN mode TEXT NOT NULL DEFAULT 'REAL' CHECK (mode IN ('REAL','SIMULATED'))")
+        feedback_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(content_feedback)")}
+        if "mode" not in feedback_columns:
+            connection.execute("ALTER TABLE content_feedback ADD COLUMN mode TEXT NOT NULL DEFAULT 'REAL' CHECK (mode IN ('REAL','SIMULATED'))")
 
         for statement in INDEXES:
             connection.execute(statement)

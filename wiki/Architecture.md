@@ -190,4 +190,9 @@ gemeten nul expliciet `0` blijft. Snapshots zijn historisch en idempotent op
 provider, external id, window en source hash. Attributie gebruikt uitsluitend
 een publication-attempt-id of exacte canonical URL; onbekende bronnen blijven
 zichtbaar als `UNATTRIBUTED`. Analytics-feedback veroorzaakt geen automatische
-herpublicatie.
+herpublicatie. `REAL` en `SIMULATED` worden in snapshots, performance,
+feedback en dashboardqueries strikt gescheiden; evergreen consumeert alleen
+`REAL`. Website Analytics registreert uitsluitend de twee input-events. Het
+output-event `CONTENT_PERFORMANCE_UPDATED` gaat naar de aparte
+`Analytics Feedback / Evergreen Feedback`-consumer en kan niet teruglussen naar
+de collector.

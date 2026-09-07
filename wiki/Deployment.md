@@ -130,7 +130,10 @@ in Git, logs of raw payloads. Een `ANALYTICS_COLLECT` event met
 `mode: SIMULATED` is geschikt voor offline testen; cadence (bijvoorbeeld 24 uur,
 7 dagen en 30 dagen) blijft een expliciete schedulerkeuze. Providerproblemen
 worden als `AUTH_REQUIRED`, `RATE_LIMITED` of `FAILED` zichtbaar zonder de
-basisdeployment ongezond te maken.
+basisdeployment ongezond te maken. `REAL` is de standaardmodus voor dashboard
+en evergreen; gebruik `mode=SIMULATED` alleen voor expliciete fixturetests. De
+standaarddatabase van de analytics-plugin is altijd `CORE_DATA/db/events.db`;
+`--db` blijft beschikbaar voor diagnostiek.
 
 ## Lokaal dashboard
 

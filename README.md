@@ -53,8 +53,10 @@ attributes website metrics to publication ledger records when possible.
 
 Use `mode: SIMULATED` for deterministic offline collection. Configure real
 Plausible collection with `PLAUSIBLE_SITE_ID` and `PLAUSIBLE_API_KEY` in the
-runtime environment. See `wiki/Analytics.md` for events, API endpoints and
-troubleshooting.
+runtime environment. Dashboard analytics defaults to `REAL`; simulated data is
+explicitly filtered and never feeds evergreen decisions. The feedback output
+event is consumed by a separate feedback plugin, not by Website Analytics.
+See `wiki/Analytics.md` for events, API endpoints and troubleshooting.
 
 ## Markdown website publishing
 

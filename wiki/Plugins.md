@@ -58,8 +58,9 @@ REST-API en schrijft een uniek document met bronfrontmatter naar
 ### Website Analytics (optioneel)
 
 Bestand: `plugins/analytics/website_analytics.py`. Deze adapter registreert
-`ANALYTICS_COLLECT`, `ANALYTICS_AGGREGATE` en
-`CONTENT_PERFORMANCE_UPDATED`. `SIMULATED` events gebruiken deterministische
+`ANALYTICS_COLLECT` en `ANALYTICS_AGGREGATE`. Het output-event
+`CONTENT_PERFORMANCE_UPDATED` wordt door de aparte `Analytics Feedback /
+Evergreen Feedback`-consumer gerouteerd. `SIMULATED` events gebruiken deterministische
 fixturedata; echte website-metingen gebruiken Plausible via
 `PLAUSIBLE_SITE_ID`, `PLAUSIBLE_API_KEY` en optioneel
 `PLAUSIBLE_API_BASE_URL`. Tokens blijven in de omgeving.
@@ -70,6 +71,8 @@ fixturedata; echte website-metingen gebruiken Plausible via
 
 Snapshots ondersteunen `24h`, `7d`, `30d` en `lifetime`, bewaren historie en
 blijven `UNATTRIBUTED` wanneer een ledger-id of exacte canonical URL ontbreekt.
+Aggregatie gebruikt standaard `REAL`; simulated gegevens kunnen alleen met een
+expliciete mode worden bekeken en beïnvloeden nooit evergreen.
 
 ## Kanalen
 
