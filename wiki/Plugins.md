@@ -55,6 +55,19 @@ REST-API en schrijft een uniek document met bronfrontmatter naar
 
 ## Kanalen
 
+### Markdown Website / Git Publisher
+
+Bestand: `plugins/channels/pub_markdown_git.py`.
+
+De route `PUBLISH_MARKDOWN_GIT` schrijft een Markdown-variant naar een
+geconfigureerde lokale Git-worktree. De plugin ondersteunt dry-run (`SIMULATED`),
+lokale writes, optionele commits en een expliciet ingeschakelde push. Frontmatter
+wordt met PyYAML geserialiseerd; output- en mediapaden blijven onder hun
+geconfigureerde repositorymappen. Alleen expliciet aangemaakte paden worden
+gestaged. Commit-SHA, doelpad en contenthash worden in de publication ledger
+vastgelegd. Zie `wiki/Markdown-Git-Publisher.md` en
+`config/markdown_git.example.json`.
+
 ### Mock Publisher
 
 Bestand: `plugins/channels/pub_mock.py`

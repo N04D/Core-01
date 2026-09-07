@@ -159,6 +159,11 @@ teruggeven met bewijs (platform-ID/URL of een betrouwbare contentmatch). Het
 dashboard exposeert unresolved attempts en biedt een expliciete operator-resolve
 actie.
 
+De Markdown/Git-reconciler gebruikt sterk lokaal bewijs: doelbestand, contenthash
+en commit-SHA. Een bewezen lokale commit wordt `CONFIRMED`; een verdwenen doel
+zonder commit kan `FAILED` worden; een niet-verifieerbare push wordt
+`NEEDS_OPERATOR`. Er wordt nooit automatisch opnieuw gepubliceerd.
+
 ## Sessies en dashboard-authenticatie
 
 `dashboard/authenticate.py` kan via Chrome DevTools Protocol (standaard

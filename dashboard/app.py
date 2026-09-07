@@ -998,7 +998,40 @@ def create_app(database_path: Path | None = None) -> Flask:
         """Return settings only for an active plugin."""
         with connect() as connection:
             plugin = active_plugin(connection, plugin_name)
-        return jsonify({"plugin": dict(plugin), "auth": auth_status(plugin_name)})
+        response: dict[str, Any] = {"plugin": dict(plugin), "auth": auth_status(plugin_name)}
+        if plugin_name == "Markdown Website Git Publisher":
+            config_file = Path(os.getenv("MARKDOWN_GIT_CONFIG", PROJECT_ROOT / "config" / "markdown_git.json"))
+            response["config"] = {
+                "config_file": str(config_file.expanduser().resolve()),
+                "configured": config_file.is_file(),
+                "repository_path": os.getenv("MARKDOWN_GIT_REPOSITORY_PATH", ""),
+                "content_directory": os.getenv("MARKDOWN_GIT_CONTENT_DIRECTORY", "content"),
+                "media_directory": os.getenv("MARKDOWN_GIT_MEDIA_DIRECTORY", "static/media"),
+                "push_enabled": os.getenv("MARKDOWN_GIT_PUSH_ENABLED", "false").lower() in {"1", "true", "yes", "on"},
+            }
+        return jsonify(response)
+
+    @app.get("/api/publication-attempts")
+    def publication_attempts() -> Any:
+        """Return ledger history, optionally filtered for dashboard views."""
+        status = request.args.get("status", "").strip().upper()
+        channel = request.args.get("channel", "").strip()
+        limit = min(max(int(request.args.get("limit", "100")), 1), 500)
+        clauses: list[str] = []
+        params: list[Any] = []
+        if status:
+            clauses.append("status=?")
+            params.append(status)
+        if channel:
+            clauses.append("channel=?")
+            params.append(channel)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with connect() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM publication_attempts {where} ORDER BY updated_at DESC,id DESC LIMIT ?",
+                (*params, limit),
+            ).fetchall()
+        return jsonify([dict(row) for row in rows])
 
     @app.get("/api/overlay-formats")
     def overlay_formats() -> Any:

@@ -40,3 +40,21 @@ Run the deployment doctor for optional capability diagnostics:
 
 See `wiki/Architecture.md` and `wiki/Deployment.md` for the complete event,
 session, reconciliation and systemd model.
+
+## Markdown website publishing
+
+The optional `Markdown Website Git Publisher` consumes `PUBLISH_MARKDOWN_GIT`
+events and writes channel variants into a configured local website checkout.
+Copy `config/markdown_git.example.json` to the ignored
+`config/markdown_git.json`, set `repository_path` and the desired content/media
+directories, then register it:
+
+```bash
+./venv/bin/python3 plugins/channels/pub_markdown_git.py \
+  --register --db "$CORE_DATA/db/events.db"
+```
+
+`commit_enabled` and `push_enabled` are conservative opt-ins. Git credentials
+remain in the host SSH agent or Git credential manager; they are never stored
+in Core-01 configuration. See `wiki/Markdown-Git-Publisher.md` for payload,
+dry-run, ledger and reconciliation details.

@@ -9,6 +9,7 @@ config/linkedin_auth.json
 config/gdrive_auth.json
 config/nightcafe_auth.json
 config/*_auth.json
+config/markdown_git.json
 runtime/
 config/.nightcafe_auth.json.swp
 linkedin_auth.json

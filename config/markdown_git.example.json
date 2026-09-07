@@ -1,0 +1,16 @@
+{
+  "enabled": true,
+  "repository_path": "/opt/example-site",
+  "content_directory": "content/posts",
+  "media_directory": "static/media",
+  "base_url": "https://example.com",
+  "url_strategy": "posts-slug",
+  "default_branch": "main",
+  "push_enabled": false,
+  "commit_enabled": true,
+  "author_name": "Core-01 Publisher",
+  "author_email": "core-01@localhost",
+  "frontmatter_format": "yaml",
+  "filename_strategy": "slug.md",
+  "git_remote": "origin"
+}
