@@ -22,6 +22,15 @@ esac
 mkdir -p "${PROFILE_DIR}"
 chmod 700 "${PROFILE_DIR}"
 
+# A persistent profile restores its previous tabs. Passing START_URL on every
+# systemd restart would append another NightCafe tab each time. Only seed the
+# first launch; subsequent starts let Chromium restore the existing session.
+START_ARGS=()
+if [[ "${NIGHTCAFE_ALWAYS_OPEN_START_URL:-0}" =~ ^(1|true|yes|on)$ ]] || \
+   ! find "${PROFILE_DIR}" -type f \( -name 'Session_*' -o -name 'Current Session' -o -name 'Last Session' \) -print -quit 2>/dev/null | grep -q .; then
+    START_ARGS=("${START_URL}")
+fi
+
 PLAYWRIGHT_BIN=""
 if [[ -x "${PROJECT_ROOT}/venv/bin/python3" ]]; then
     PLAYWRIGHT_BIN="$(${PROJECT_ROOT}/venv/bin/python3 -c 'from playwright.sync_api import sync_playwright; p=sync_playwright().start(); print(p.chromium.executable_path); p.stop()' 2>/dev/null || true)"
@@ -58,4 +67,4 @@ exec "${CHROMIUM_BIN}" \
     --window-size=1365,768 \
     "${HEADLESS_ARGS[@]}" \
     "${SANDBOX_ARGS[@]}" \
-    "${START_URL}"
+    "${START_ARGS[@]}"
