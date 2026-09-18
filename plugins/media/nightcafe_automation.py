@@ -376,14 +376,31 @@ def has_external_session(args: argparse.Namespace) -> bool:
 
 
 def select_cdp_page(context: object) -> object:
-    """Select the existing creator.nightcafe.studio tab; never use a blank page."""
+    """Select one existing NightCafe tab and prune stale NightCafe duplicates.
+
+    A long-lived CDP profile can accumulate tabs when a previous Playwright
+    run or the site's Create action opens a new target.  Keep the newest
+    NightCafe target (Playwright preserves creation order in ``context.pages``)
+    and close only older NightCafe targets.  Unrelated user tabs are never
+    touched.
+    """
     pages = list(getattr(context, "pages", ()))
+    candidates: list[object] = []
     for index, page in enumerate(pages):
         url = str(getattr(page, "url", ""))
         LOGGER.debug("CDP tab[%d] URL=%s", index, url.split("?", 1)[0])
         if "creator.nightcafe.studio" in url.casefold():
-            LOGGER.info("Using existing CDP NightCafe tab[%d]: %s", index, url.split("?", 1)[0])
-            return page
+            candidates.append(page)
+    if candidates:
+        selected = candidates[-1]
+        for stale in candidates[:-1]:
+            try:
+                stale.close()
+                LOGGER.info("Closed stale CDP NightCafe tab: %s", str(getattr(stale, "url", "")).split("?", 1)[0])
+            except Exception as exc:
+                LOGGER.warning("Could not close stale NightCafe tab: %s", exc)
+        LOGGER.info("Using existing CDP NightCafe tab: %s", str(getattr(selected, "url", "")).split("?", 1)[0])
+        return selected
     raise RuntimeError(
         "CDP connected, but no existing tab contains creator.nightcafe.studio; "
         "open NightCafe in Chrome first"

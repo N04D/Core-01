@@ -197,11 +197,19 @@ class NightCafeWorkflowTests(unittest.TestCase):
         class Page:
             def __init__(self, url):
                 self.url = url
+                self.closed = False
+            def close(self):
+                self.closed = True
         class Context:
             def __init__(self, pages):
                 self.pages = pages
         page = Page("https://creator.nightcafe.studio/create")
         self.assertIs(select_cdp_page(Context([Page("about:blank"), page])), page)
+        stale = Page("https://creator.nightcafe.studio/")
+        newest = Page("https://creator.nightcafe.studio/create")
+        self.assertIs(select_cdp_page(Context([stale, newest])), newest)
+        self.assertTrue(stale.closed)
+        self.assertFalse(newest.closed)
         with self.assertRaises(RuntimeError):
             select_cdp_page(Context([Page("about:blank")]))
         with self.assertRaises(RuntimeError):
