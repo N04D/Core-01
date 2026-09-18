@@ -40,6 +40,10 @@ if [[ -n "${NIGHTCAFE_CHROMIUM_BIN:-}" ]]; then
     CHROMIUM_BIN="${NIGHTCAFE_CHROMIUM_BIN}"
 elif [[ -n "${PLAYWRIGHT_BIN}" && -x "${PLAYWRIGHT_BIN}" ]]; then
     CHROMIUM_BIN="${PLAYWRIGHT_BIN}"
+elif [[ -d "${HOME}/.cache/ms-playwright" ]]; then
+    # Keep working when the Python package was removed but its installed
+    # browser cache remains available. Prefer the newest managed binary.
+    CHROMIUM_BIN="$(find "${HOME}/.cache/ms-playwright" -path '*/chrome-linux64/chrome' -type f -executable -print 2>/dev/null | sort -V | tail -n 1)"
 elif command -v chromium >/dev/null 2>&1; then
     CHROMIUM_BIN="$(command -v chromium)"
 elif command -v chromium-browser >/dev/null 2>&1; then
